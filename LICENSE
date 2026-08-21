@@ -1,22 +1,70 @@
 # CoreKG Open Source License
 
-CoreKG is licensed under the Apache License 2.0, with the following additional conditions:
+CoreKG is licensed under the Apache License 2.0, with the following additional conditions. The English text is authoritative; the Chinese text is provided for reference only.
 
-1. CoreKG is permitted to be used for commercialization. You may use CoreKG as a "backend-as-a-service" for other applications or deliver it to enterprises as an application development platform. However, when either of the following conditions is met, you must contact the producer to obtain a commercial license:
+CoreKG 依据 Apache License 2.0 授权，并附加以下补充条件。英文文本具有法律效力，中文文本仅供参考。
 
-   a. Multi-tenant SaaS service: Unless explicitly authorized by the CoreKG maintainers in writing, you may not use the CoreKG source code to operate a multi-tenant SaaS service that is similar to CoreKG.
+---
 
-   b. Logo and copyright information: When using CoreKG, you may not remove or modify the CoreKG logo or copyright information displayed in the CoreKG console.
+## 1. Commercial Use / 商业化使用
 
-   Please contact the CoreKG maintainers through the repository's GitHub Issues at https://github.com/insmtx/CoreKG/issues for commercial licensing matters.
+CoreKG is permitted to be used for commercialization. You may use CoreKG as a "backend-as-a-service" for other applications or deliver it to enterprises as an application development platform, provided that you comply with section 2 when engaging in the commercial use described there.
 
-2. As a contributor, you agree that your contributed code:
+CoreKG 允许被用于商业化。您可以将 CoreKG 作为其他应用的"后端即服务"，或作为应用开发平台交付给企业。但当涉及第 2 条所述商业化情形时，您必须遵守第 2 条的要求。
 
-   a. May be licensed under open-source terms that the producer adjusts to be more strict or more relaxed.
+## 2. Conditions Requiring a Commercial License / 需取得商业许可的情形
 
-   b. May be used for commercial purposes, including CoreKG's cloud business.
+When any of the following conditions is met, you must contact the CoreKG maintainers to obtain a commercial license:
+
+满足以下任一条件时，您必须联系 CoreKG 维护者取得商业许可：
+
+### a. Multi-tenant SaaS Service / 多租户 SaaS 服务
+
+Unless explicitly authorized by the CoreKG maintainers in writing, you may not use the CoreKG source code to operate a multi-tenant SaaS service that is similar to CoreKG.
+
+除非经 CoreKG 维护者书面明确授权，您不得使用 CoreKG 源代码运营与 CoreKG 相似的多租户 SaaS 服务。
+
+### b. Knowledge Graph / 知识图谱
+
+The knowledge graph features — including but not limited to graph schema, node and edge management, graph construction tasks, and graph-based RAG search — are reserved for commercial licensing. Any commercial or profit-making use of these features, including without limitation operating a SaaS business built on them, offering them as paid services, or deploying them for paid enterprise delivery, requires a commercial license from the CoreKG maintainers. Non-commercial use of the knowledge graph features remains governed by this License.
+
+知识图谱功能——包括但不限于图谱 Schema、节点与边管理、图谱构建任务、基于图谱的 RAG 搜索——为商业授权保留功能。任何对上述功能的商业化或获利性使用，包括但不限于基于它们运营 SaaS 业务、将其作为付费服务提供，或为付费的企业交付进行部署，均需取得 CoreKG 维护者的商业许可。知识图谱功能的非商业性使用仍受本许可证约束。
+
+### c. OFD Document Support / OFD 文档支持
+
+The OFD document support features — including but not limited to OFD document upload, preview, parsing, and OFD-to-PDF conversion — are reserved for commercial licensing. Any commercial or profit-making use of these features, including without limitation operating a SaaS business built on them, offering them as paid services, or deploying them for paid enterprise delivery, requires a commercial license from the CoreKG maintainers. Non-commercial use of the OFD document support features remains governed by this License.
+
+OFD 文档支持功能——包括但不限于 OFD 文档上传、预览、解析、OFD 转 PDF——为商业授权保留功能。任何对上述功能的商业化或获利性使用，包括但不限于基于它们运营 SaaS 业务、将其作为付费服务提供，或为付费的企业交付进行部署，均需取得 CoreKG 维护者的商业许可。OFD 文档支持功能的非商业性使用仍受本许可证约束。
+
+### d. Logo and Copyright Information / Logo 与版权信息
+
+When using CoreKG, you may not remove or modify the CoreKG logo or copyright information displayed in the CoreKG console.
+
+使用 CoreKG 时，您不得移除或修改 CoreKG 控制台中展示的 CoreKG logo 或版权信息。
+
+对于商业许可事宜，请通过仓库的 GitHub Issues（https://github.com/insmtx/CoreKG/issues）联系 CoreKG 维护者。
+
+Please contact the CoreKG maintainers for commercial licensing matters through the repository's GitHub Issues at https://github.com/insmtx/CoreKG/issues.
+
+## 3. Contributor Terms / 贡献者条款
+
+As a contributor, you agree that your contributed code:
+
+作为贡献者，您同意您贡献的代码：
+
+a. May be licensed under open-source terms that the producer adjusts to be more strict or more relaxed.
+
+a. 可能依据生产者调整为更严格或更宽松的开源条款进行授权。
+
+b. May be used for commercial purposes, including CoreKG's cloud business.
+
+b. 可能被用于商业用途，包括 CoreKG 的云业务。
+
+---
 
 Apart from these additional conditions, all other rights and restrictions follow the Apache License 2.0. For more detailed information, refer to the full Apache License 2.0.
+
+除上述补充条件外，其余一切权利与限制均遵循 Apache License 2.0。更多详情请参考完整版 Apache License 2.0。
 
 Copyright 2026 CoreKG Contributors.
 
