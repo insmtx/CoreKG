@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ygpkg/yg-go/logs"
 	"github.com/ygpkg/yg-go/pool/svrpool"
 )
 
@@ -18,21 +19,20 @@ type remoteHTTPSandbox struct {
 	token   string
 	timeout time.Duration
 	client  *http.Client
+	usePool bool
 }
 
-const (
-	sandboxPoolKey = "sandbox"
-)
+const sandboxPoolKey = "sandbox"
 
-var sandboxPool *svrpool.PoolManager
+var sandboxPool = &svrpool.PoolManager{}
 
 func NewRemoteHTTPSandbox(cfg *Config) (Sandbox, error) {
 	if cfg.HttpBaseURL == "" {
 		return nil, errors.New("HttpBaseURL required")
 	}
-	if sandboxPool == nil {
-		sandboxPool = &svrpool.PoolManager{}
-		sandboxPool.RegistryServicePool("knowledge", sandboxPoolKey)
+	usePool := sandboxPool.RegistryServicePool("knowledge", sandboxPoolKey)
+	if !usePool {
+		logs.Warnw("sandbox service pool unavailable; falling back to direct HTTP", "key", sandboxPoolKey)
 	}
 	cli := &http.Client{Timeout: time.Duration(cfg.Timeout) * time.Second}
 	return &remoteHTTPSandbox{
@@ -40,6 +40,7 @@ func NewRemoteHTTPSandbox(cfg *Config) (Sandbox, error) {
 		token:   cfg.HttpToken,
 		timeout: time.Duration(cfg.Timeout) * time.Second,
 		client:  cli,
+		usePool: usePool,
 	}, nil
 }
 
@@ -62,12 +63,13 @@ type checkResponse struct {
 }
 
 func (s *remoteHTTPSandbox) Exec(ctx context.Context, lang string, code string) (*ExecResult, error) {
-	// 间隔一秒重试一次重试20次,name暂时不用
-	id, _, err := sandboxPool.AcquireService(sandboxPoolKey, time.Second, 20)
-	if err != nil {
-		return &ExecResult{Stdout: "", Stderr: err.Error(), ExitCode: -1}, err
+	if s.usePool {
+		id, _, err := sandboxPool.AcquireService(sandboxPoolKey, time.Second, 20)
+		if err != nil {
+			return &ExecResult{Stdout: "", Stderr: err.Error(), ExitCode: -1}, err
+		}
+		defer sandboxPool.ReleaseService(sandboxPoolKey, id)
 	}
-	defer sandboxPool.ReleaseService(sandboxPoolKey, id)
 
 	if lang == "" {
 		lang = "python"
@@ -104,12 +106,13 @@ func (s *remoteHTTPSandbox) Exec(ctx context.Context, lang string, code string) 
 }
 
 func (s *remoteHTTPSandbox) CheckSyntax(ctx context.Context, lang string, code string) (*SyntaxCheckResult, error) {
-	// 间隔一秒重试一次重试20次,name暂时不用
-	id, _, err := sandboxPool.AcquireService(sandboxPoolKey, time.Second, 20)
-	if err != nil {
-		return &SyntaxCheckResult{Valid: false, Stdout: "", Stderr: err.Error(), ExitCode: -1}, err
+	if s.usePool {
+		id, _, err := sandboxPool.AcquireService(sandboxPoolKey, time.Second, 20)
+		if err != nil {
+			return &SyntaxCheckResult{Valid: false, Stdout: "", Stderr: err.Error(), ExitCode: -1}, err
+		}
+		defer sandboxPool.ReleaseService(sandboxPoolKey, id)
 	}
-	defer sandboxPool.ReleaseService(sandboxPoolKey, id)
 
 	if lang == "" {
 		lang = "python"

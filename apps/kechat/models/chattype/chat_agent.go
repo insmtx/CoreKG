@@ -79,6 +79,10 @@ type ChatAgent struct {
 	ShowName string `gorm:"column:show_name;type:varchar(64);not null;default:'';index:show_name;comment:机器人显示名称" json:"show_name"`
 	// AgentType 机器人类型
 	AgentType AgentType `gorm:"column:agent_type;type:varchar(32);not null;default:'';index:agent_type;comment:机器人类型" json:"agent_type"`
+	// CreatedType 创建类型
+	CreatedType string `gorm:"column:created_type;type:varchar(32);not null;default:'user';index:created_type;comment:创建类型" json:"created_type"`
+	// ManagerIDs 管理员ID
+	ManagerIDs types.UintArray `gorm:"column:manager_ids;type:varchar(256);comment:管理员ID" json:"manager_ids"`
 	// PublicScope 公开范围
 	PublicScope PublicScope `gorm:"column:public_scope;type:varchar(32);not null;default:'private';comment:公开范围" json:"public_scope"`
 	// Version 版本

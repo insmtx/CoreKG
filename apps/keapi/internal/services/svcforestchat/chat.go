@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/insmtx/corekg/apps/kechat/models/chattype"
 	"github.com/insmtx/corekg/apps/kecore/models/forest"
 	"github.com/insmtx/corekg/apps/kecore/models/foresttype"
+	"github.com/insmtx/corekg/apps/kecore/services/svcforest"
 	"github.com/insmtx/corekg/apps/kellm/models/kellmtype"
 	"github.com/insmtx/corekg/pkgs/einotools/printer"
 	roctypes "github.com/insmtx/corekg/pkgs/types"
@@ -31,6 +33,7 @@ import (
 var (
 	ErrInvalidChatMessages = errors.New("invalid chat messages")
 	ErrInvalidForestFiles  = errors.New("invalid forest files")
+	ErrInvalidForestScope  = errors.New("invalid forest scope")
 	ErrChatModelNotFound   = errors.New("chat model not found")
 )
 
@@ -389,6 +392,46 @@ func buildForestFileSession(ctx *gin.Context, model *chattype.ChatModel, fileIDs
 	return session, nil
 }
 
+func buildForestSession(ctx *gin.Context, model *chattype.ChatModel, forestID uint, name string) (*chattype.ChatSession, error) {
+	forestList, err := svcforest.ListForest(ctx, &svcforest.ListForestRequest{
+		Uin:       runtime.Uin(ctx),
+		CompanyID: runtime.CompanyID(ctx),
+		Query: apiobj.PageQuery{
+			ListAll: true,
+			Filters: []apiobj.Filter{{
+				Field: "id",
+				Value: []string{strconv.FormatUint(uint64(forestID), 10)},
+			}},
+		},
+		PresetWhenListing: false,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("validate forest access: %w", err)
+	}
+	if len(forestList.Data) != 1 || forestList.Data[0].ID != forestID {
+		return nil, fmt.Errorf("%w: forest %d is not accessible", ErrInvalidForestScope, forestID)
+	}
+
+	forestInfo := forestList.Data[0]
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = chattype.DefaultSessionName
+	}
+
+	return &chattype.ChatSession{
+		CompanyID:    runtime.CompanyID(ctx),
+		Uin:          runtime.Uin(ctx),
+		Name:         name,
+		ModelName:    model.ShowName,
+		ModelID:      model.ID,
+		ResourceType: chattype.ResourceTypeForest,
+		BaseType:     chattype.ResourceQASessionBaseTypeForestAgent,
+		ForestIDList: roctypes.NewUintArray([]uint{forestID}),
+		EsIndex:      forestInfo.EsIndex(),
+		PromptMode:   "normal",
+	}, nil
+}
+
 func resolveForestFileScope(ctx *gin.Context, fileIDs []uint) ([]uint, string, error) {
 	if len(fileIDs) == 0 {
 		return nil, "ke_0", nil
@@ -440,10 +483,36 @@ func resolveForestFileScope(ctx *gin.Context, fileIDs []uint) ([]uint, string, e
 	if len(foundFileIDs) != len(requestedFileIDs) {
 		return nil, "", fmt.Errorf("%w: some forest_file_id values do not exist", ErrInvalidForestFiles)
 	}
+	accessibleForests, err := svcforest.ListForest(ctx, &svcforest.ListForestRequest{
+		Uin:       runtime.Uin(ctx),
+		CompanyID: runtime.CompanyID(ctx),
+		Query: apiobj.PageQuery{
+			ListAll: true,
+			Filters: []apiobj.Filter{{
+				Field: "id",
+				Value: forestIDValues(forestIDs),
+			}},
+		},
+		PresetWhenListing: false,
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("validate forest access: %w", err)
+	}
+	if len(accessibleForests.Data) != len(forestIDSet) {
+		return nil, "", fmt.Errorf("%w: forest file is not accessible", ErrInvalidForestFiles)
+	}
 	if esIndex == "" {
 		esIndex = "ke_0"
 	}
 	return forestIDs, esIndex, nil
+}
+
+func forestIDValues(forestIDs []uint) []string {
+	values := make([]string, 0, len(forestIDs))
+	for _, forestID := range forestIDs {
+		values = append(values, strconv.FormatUint(uint64(forestID), 10))
+	}
+	return values
 }
 
 func buildChatInput(messages []kellmtype.Message) ([]chatHistoryPair, string, []string, string, error) {

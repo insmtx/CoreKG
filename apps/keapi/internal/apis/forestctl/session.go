@@ -21,6 +21,9 @@ func CreateChatSession(ctx *gin.Context, req *dtokeapi.CreateChatSessionRequest,
 		case errors.Is(err, svcforestchat.ErrInvalidForestFiles):
 			resp.Code = errcode.ErrCode_BadRequest
 			resp.Message = "keapi_invalid_forest_file_ids"
+		case errors.Is(err, svcforestchat.ErrInvalidForestScope):
+			resp.Code = errcode.ErrCode_NotFound
+			resp.Message = "keapi_forest_not_found"
 		case errors.Is(err, svcforestchat.ErrChatModelNotFound):
 			resp.Code = errcode.ErrCode_BadRequest
 			resp.Message = "keapi_chat_model_not_found"

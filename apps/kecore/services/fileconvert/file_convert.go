@@ -13,11 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/insmtx/corekg/apps/kecore/models/fs"
-	"github.com/insmtx/corekg/pkgs/global"
 	"github.com/insmtx/corekg/pkgs/utils/dbutil"
-	"github.com/insmtx/corekg/pkgs/utils/s3util"
-	"github.com/insmtx/corekg/version"
-	"github.com/ygpkg/yg-go/config"
 	"github.com/ygpkg/yg-go/logs"
 	"github.com/ygpkg/yg-go/settings"
 	"github.com/ygpkg/yg-go/storage"
@@ -94,7 +90,7 @@ func doConvert(ctx *gin.Context, fileInfo *storage.FileInfo, targetExt string) (
 }
 
 func downloadFromStorage(ctx *gin.Context, storagePath string) ([]byte, error) {
-	storager, err := getUploadStorager(ctx)
+	storager, err := fs.GetForestStorage()
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +169,7 @@ func reuploadConvertedFile(ctx *gin.Context, original *storage.FileInfo, data []
 	originalPathWithoutExt := strings.TrimSuffix(original.StoragePath, filepath.Ext(original.StoragePath))
 	newStoragePath := originalPathWithoutExt + targetExt
 
-	storager, err := getUploadStorager(ctx)
+	storager, err := fs.GetForestStorage()
 	if err != nil {
 		return nil, err
 	}
@@ -203,30 +199,4 @@ func reuploadConvertedFile(ctx *gin.Context, original *storage.FileInfo, data []
 	}
 
 	return newFileInfo, nil
-}
-
-func getUploadStorager(ctx *gin.Context) (storage.Storager, error) {
-	if version.DeployMode() != "" && version.DeployMode() != global.DeployModeOpenPO {
-		var cfg config.StorageConfig
-		if err := settings.GetYaml(settings.SettingGroupCore, storage.SettingPrefix+fs.PurposeKeFile, &cfg); err != nil {
-			logs.ErrorContextf(ctx, "get storage config error: %v", err)
-			return nil, err
-		}
-
-		endpoint, resolveErr := s3util.ResolveS3Endpoint(ctx.GetHeader("Referer"), ctx.Request)
-		if resolveErr != nil {
-			logs.ErrorContextf(ctx, "resolve s3 endpoint error, keep original config endpoint[%s]: %v", cfg.S3.EndPoint, resolveErr)
-		} else {
-			cfg.S3.EndPoint = endpoint
-		}
-
-		st, err := storage.NewStorageWithCfg(cfg)
-		if err != nil {
-			logs.ErrorContextf(ctx, "create storage error: %v", err)
-			return nil, err
-		}
-		return st, nil
-	}
-
-	return fs.Forest, nil
 }

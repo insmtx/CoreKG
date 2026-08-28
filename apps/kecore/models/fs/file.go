@@ -2,6 +2,7 @@ package fs
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/ygpkg/yg-go/config"
 	"github.com/ygpkg/yg-go/logs"
@@ -34,4 +35,17 @@ func InitForestStorage() error {
 	}
 
 	return nil
+}
+
+// GetForestStorage returns the internal knowledge-base file storage.
+func GetForestStorage() (storage.Storager, error) {
+	if Forest == nil {
+		if err := InitForestStorage(); err != nil {
+			return nil, err
+		}
+	}
+	if Forest == nil {
+		return nil, fmt.Errorf("forest storage is not initialized")
+	}
+	return Forest, nil
 }

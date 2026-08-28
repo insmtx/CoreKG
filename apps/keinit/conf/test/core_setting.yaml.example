@@ -34,7 +34,7 @@
   name: 知识存储
   describe: 知识库文件对象存储（MinIO）配置
   value_type: yaml
-  value: "purpose: forest-file\r\npresigned_timeout: \"24h\"\r\ns3:\r\n  end_point: http://localhost:9002\r\n  access_key_id: minioadmin\r\n  secret_access_key: minio123456\r\n  region: minio\r\n  bucket: corekg-bucket\r\n  use_path_style: true\r\n\r\n"
+  value: "purpose: forest-file\r\npresigned_timeout: \"24h\"\r\ns3:\r\n  end_point: http://localhost:9002\r\n  public_end_point: http://localhost:9002\r\n  access_key_id: minioadmin\r\n  secret_access_key: minio123456\r\n  region: minio\r\n  bucket: corekg-bucket\r\n  use_path_style: true\r\n\r\n"
 
 - group: core
   key: cos-cu-image
@@ -67,6 +67,14 @@
   describe: 知识库 Redis 配置
   value_type: yaml
   value: "addr: localhost:6381\r\npassword: \"\"\r\ndb: 4\r\n"
+
+# --- Sandbox 并发控制 ---
+- group: knowledge
+  key: sandbox
+  name: Sandbox 服务池
+  describe: 远程 Sandbox 并发控制服务池
+  value_type: yaml
+  value: "services:\r\n  - name: sandbox\r\n    cap: 20\r\nexpire: 2m\r\nversion: v1"
 
 - group: knowledge
   key: loc_redis

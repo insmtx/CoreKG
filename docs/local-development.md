@@ -13,6 +13,7 @@
 | MinIO | `minio_RELEASE.2025-04-22T22-12-26Z` | 9000 / 9001 | **9002** / **9003** | minioadmin / `minio123456` |
 | NATS | `nats:2.12.7` | 4222 | **4225** | 无认证 |
 | Nebula Graph（3 容器） | `nebula-metad` / `nebula-storaged` / `nebula-graphd`（`:v3.8.0`） | metad 9559 / storaged 9779 / graphd 9669 | **9559 / 9779 / 9669** | root / `nebula` |
+| CoreKG 前端 | `corekg-frontend:latest` | 80 | **3001** | 使用 CoreKG 登录 |
 
 > **镜像仓库说明**：上表简写镜像位于 `registry.cn-beijing.aliyuncs.com/yygu/corekg:<简写>`（除 `nebula-metad`、`nats` 在 `registry.yygu.cn/library/<镜像>:<tag>`）。完整镜像地址以 `docker-compose.yml` 为准。
 
@@ -25,12 +26,17 @@
 ## 2. 快速启动
 
 ```bash
-# 1) 启动全部基础依赖（本仓库已提供固定默认值的 docker-compose.yml）
-docker compose up -d
+# 1) 首次执行基础设施初始化（完成后 keinit 正常退出）
+docker compose up --build keinit
 
-# 2) 等待各 init / activator 完成一次性初始化后确认状态
+# 2) 启动前端、corekg 及其依赖
+docker compose up -d --build frontend
+
+# 3) 确认状态；前端访问地址为 http://localhost:3001
 docker compose ps
 ```
+
+如需同时启动 pipeline、文档转换等全部服务，执行 `docker compose up -d --build`。前端容器同时代理 `/v2/*`、`/v3/*` 到 `corekg:8080`，以及 `/corekg-bucket/*` 到 `minio:9000`；可通过 `curl -fsS http://localhost:3001/healthz` 检查前端健康状态。本地 Compose 不编排 Coze 工作流前端。
 
 - 首次启动 MySQL 时，`scripts/mysql-docker-init.sh` 会自动额外创建 `opencoze` 数据库（供 kechat / keinit / workflow 使用），并向 `corekg` 用户授权。
 - Minio 启动后 `minio-init` 会自动创建 `corekg-bucket`（幂等，重复执行不报错）。
@@ -70,6 +76,7 @@ docker exec -it corekg-nebula-graphd /usr/local/nebula/bin/nebula-console \
 - **MySQL（opencoze）DSN**：`mysql://corekg:123456@localhost:3308/opencoze?charset=utf8mb4&parseTime=true&loc=Local`
 - **Redis**：`addr: localhost:6381`
 - **Elasticsearch**：`addresses: [http://localhost:9202]`，`username: elastic`，`password: 123456`
+- **CoreKG 文件存储（Compose）**：`cos-ke.s3.end_point: http://minio:9000` 用于 CoreKG 容器内部访问，`cos-ke.s3.public_end_point: http://localhost:3001` 用于浏览器预签名 URL；宿主机直接运行 CoreKG 时，`end_point` 应改为宿主机映射地址 `http://localhost:9002`。`public_end_point` 不包含 Bucket，Bucket 由 `cos-ke.s3.bucket` 单独配置；未配置时回退到 `end_point`。
 - **MinIO**：`end_point: http://localhost:9002`，`access_key_id: minioadmin`，`secret_access_key: minio123456`
   > ⚠️ **workflow 的 MinIO 连接是例外**：workflow 用 `minio-go` 客户端，其 `endpoint` 必须是**裸 host:port**（`localhost:9002`，不带 `://`），scheme 由 config 的 `storage.upload_http_scheme`（本地应填 `http`）决定。若写成 `http://localhost:9002` 会报 `Endpoint url cannot have fully qualified paths.`。凭证需与 docker-compose 的 `MINIO_ROOT_USER/MINIO_ROOT_PASSWORD`（`minioadmin` / `minio123456`）一致；`storage.bucket` 不存在时 workflow 会自动创建。
 - **NATS**：`nats://localhost:4225`
@@ -204,7 +211,7 @@ docker compose -f docker-compose.pipeline.yml up -d --build   # 中间件 + core
 
 ## 6. 前端 / worker / pipeline 配置同步
 
-- **前端**：`frontend/corekg/.env.development.example`、`.env.production.example`（API 地址指向对应后端应用映射端口）。
+- **前端**：Vite 开发模式使用 `frontend/corekg/.env.development.example`；Docker Compose 生产构建通过 Nginx 同源代理 API 与 MinIO，不需要填写 `VITE_API_URL`，未设置 `VITE_LOGIN_URL` 时使用浏览器当前站点。浏览器文件 URL 由 `cos-ke.s3.public_end_point` 控制，Compose 默认是 `http://localhost:3001`。
 - **TS worker**：`apps/worker/.env.example`。
 - **Python pipeline**：`apps/pipeline/config/*.yaml.example`。
 - **workflow 应用**：其 `config.yaml`（`apps/workflow/conf/test/config.yaml`，以及聚合进 `apps/corekg/conf/test/config.yaml(.example)` 的 workflow 配置块）**不再依赖环境变量**，所有连接信息已收敛为与 `docker-compose.yml` 一致的**字面值**，直接运行即可：

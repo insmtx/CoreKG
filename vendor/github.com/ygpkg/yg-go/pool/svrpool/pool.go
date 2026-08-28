@@ -23,27 +23,38 @@ type PoolManager struct {
 }
 
 // RegistryServicePool 注册服务
-func (pm *PoolManager) RegistryServicePool(group, key string) {
+func (pm *PoolManager) RegistryServicePool(group, key string) (registered bool) {
 	pm.Lock()
 	defer pm.Unlock()
+	defer func() {
+		if err := recover(); err != nil {
+			logs.Errorw("RegistryServicePool error", "key", key, "err", err)
+			registered = false
+		}
+	}()
 	if pm.svrs == nil {
 		pm.ctx = lifecycle.Std().Context()
 		pm.svrs = make(map[string]*ServicePool)
 	}
 	if _, ok := pm.svrs[key]; ok {
-		logs.Errorw("RegistryServicePool error", "key", key, "err", "key already exists")
-		return
+		return true
 	}
 
-	pm.svrs[key] = NewServicePool(context.Background(), group, key)
-	go func() {
+	servicePool := NewServicePool(context.Background(), group, key)
+	if servicePool == nil {
+		logs.Errorw("RegistryServicePool error", "key", key, "err", "service pool config unavailable")
+		return false
+	}
+	pm.svrs[key] = servicePool
+	go func(sp *ServicePool) {
 		for {
 			//五分钟刷新
 			time.Sleep(time.Minute * 5)
-			pm.svrs[key].refreshSetting()
+			sp.refreshSetting()
 		}
-	}()
+	}(servicePool)
 	logs.Infof("RegistryServicePool %s success", key)
+	return true
 }
 
 // AcquireService 获取服务
@@ -59,7 +70,7 @@ func (pm *PoolManager) AcquireService(key string, interval time.Duration, retryT
 			return true, fmt.Errorf("svrpool not init")
 		}
 		sp, ok := pm.svrs[key]
-		if !ok {
+		if !ok || sp == nil {
 			return true, fmt.Errorf("svr %s not registered", key)
 		}
 		id, svr, err = sp.pool.AcquireString()
@@ -79,7 +90,7 @@ func (pm *PoolManager) ReleaseService(key string, id pool.ResourceID) {
 		return
 	}
 	sp, ok := pm.svrs[key]
-	if ok {
+	if ok && sp != nil {
 		sp.pool.ReleaseString(id)
 	}
 }

@@ -42,6 +42,14 @@ LD_FLAGS = -X ${PKGDIR}/version.version=$(VERSION) \
  -X ${PKGDIR}/version.builtAt=$(BUILD_AT) \
  -X ${PKGDIR}/version.deployMode=$(DEPLOY_MODE)
 
+CLI_PKGDIR = ${PKGDIR}/clients/corekg-cli/internal/buildinfo
+CLI_VERSION = $(if $(strip $(VERSION)),$(VERSION),dev)
+CLI_GIT_COMMIT = $(if $(strip $(GIT_COMMIT)),$(GIT_COMMIT),unknown)
+CLI_BUILD_AT = $(if $(strip $(BUILD_AT)),$(BUILD_AT),unknown)
+CLI_LD_FLAGS = -X ${CLI_PKGDIR}.Version=$(CLI_VERSION) \
+ -X ${CLI_PKGDIR}.GitCommit=$(CLI_GIT_COMMIT) \
+ -X ${CLI_PKGDIR}.BuiltAt=$(CLI_BUILD_AT)
+
 
 ver:
 	@echo "Version:   " $(VERSION)
@@ -136,6 +144,23 @@ push-image-exist:
 
 linux-client: check-app
 	GOOS=linux GOARCH=amd64 go build -ldflags="$(LD_FLAGS)" -v -o bundles/${APP}-linux ./clients/${APP}
+
+corekg-cli:
+	mkdir -p bundles
+	CGO_ENABLED=0 $(GO) build -mod=vendor -trimpath -ldflags="$(CLI_LD_FLAGS)" -v -o bundles/corekg-cli ./clients/corekg-cli
+
+corekg-cli-test:
+	$(GO) test -mod=vendor ./clients/corekg-cli/...
+
+corekg-cli-linux:
+	mkdir -p bundles
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(GOARCH) $(GO) build -mod=vendor -trimpath -ldflags="$(CLI_LD_FLAGS)" -v -o bundles/corekg-cli-linux ./clients/corekg-cli
+
+corekg-cli-npm:
+	CLI_VERSION=$(CLI_VERSION) CLI_GIT_COMMIT=$(CLI_GIT_COMMIT) CLI_BUILD_AT=$(CLI_BUILD_AT) ./clients/corekg-cli/scripts/package-npm.sh
+
+corekg-cli-npm-preflight: corekg-cli-test corekg-cli-npm
+	@echo "CoreKG CLI npm artifacts passed build and package preflight"
 	
 release-windows: check-app
 	mkdir -p ./bundles/${APP_VERSION}/

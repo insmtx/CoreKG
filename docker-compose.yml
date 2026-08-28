@@ -9,7 +9,8 @@
 # 说明：
 #   - 为规避宿主机上可能已占用的默认端口，宿主机端口在容器默认端口基础上统一 +2：
 #       MySQL 3308(:3306)  Redis 6381(:6379)  ES 9202(:9200)/9302(:9300)
-#       MinIO 9002(:9000)/9003(:9001)  NATS 4225(:4222)  Nebula 9669(:9669)  corekg 8080(:8080)
+#       MinIO 9002(:9000)/9003(:9001)  NATS 4225(:4222)  Nebula 9669(:9669)
+#       corekg 8080(:8080)  frontend 3001(:80)
 #   - 所有中间件明文密码统一为 123456（本地开发默认值）。
 #   - 容器之间通过服务名+容器内端口互连；宿主机进程经映射端口访问。
 #   - 首次启动时会通过 scripts/mysql-docker-init.sh 额外创建 opencoze 库。
@@ -24,7 +25,7 @@
 # 服务名（容器内端口）：
 #   mysql:3306  elasticsearch:9200  minio:9000  nats:4222  redis:6379
 #   nebula：metad0:9559  storaged0:9779  graphd:9669（单节点 Nebula，3 容器）
-#   corekg:8080  chunker（chunk worker）  analyser（doc worker）
+#   corekg:8080  frontend:80  chunker（chunk worker）  analyser（doc worker）
 #   doc2pdf（PDF 预览）  description（file_description 摘要 worker）
 #   coze-static-loader  keinit（一次性初始化）
 #
@@ -321,6 +322,11 @@ services:
       dockerfile: apps/corekg/script/Dockerfile
     image: corekg:latest
     container_name: corekg
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
     environment:
       ENABLE_NEBULA_GRAPH: "true"
       NATS_URL: nats://nats:4222   # 指向本编排内 nats 服务；必需，否则 initNATS/task 桥接与 SaveTask 派发失败
@@ -350,6 +356,28 @@ services:
       retries: 30
       start_period: 30s
 
+  # ---------- CoreKG 前端（Nginx 静态站点 + CoreKG/MinIO 同源代理） ----------
+  frontend:
+    build:
+      context: ./frontend/corekg
+      dockerfile: Dockerfile.prod
+    image: corekg-frontend:latest
+    container_name: corekg-frontend
+    restart: unless-stopped
+    ports:
+      - "3001:80"
+    depends_on:
+      corekg:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1/healthz | grep -qx ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
   # ---------- pipeline：chunk 切块 worker ----------
   chunker:
     build:
@@ -371,6 +399,11 @@ services:
   analyser:
     image: corekg-pipeline:latest
     container_name: corekg-pipeline-analyser
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
     command: ["python", "doc_worker_main.py"]
     volumes:
       - ./apps/pipeline/config/analyser_config.docker.yaml:/app/config/analyser_config.yaml:ro

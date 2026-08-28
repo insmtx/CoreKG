@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Tabs, TabsProps } from 'antd'
 import { useMount } from 'ahooks'
 import { useTranslation } from 'react-i18next'
@@ -21,6 +21,11 @@ interface LoginConfig {
 const LoginPage: React.FC = () => {
   const { t } = useTranslation('pages')
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const requestedReturnTo = searchParams.get('return_to')
+  const returnTo = requestedReturnTo?.startsWith('/cli/authorize')
+    ? requestedReturnTo
+    : '/'
 
   const [activeTab, setActiveTab] = useState('wechat')
   const [tabItems, setTabItems] = useState<TabsProps['items']>([])
@@ -52,7 +57,7 @@ const LoginPage: React.FC = () => {
   }
 
   const handleLoginSuccess = () => {
-    navigate('/')
+    navigate(returnTo)
   }
 
   const [initLoading, setInitLoading] = useState(true)
@@ -70,6 +75,7 @@ const LoginPage: React.FC = () => {
           children: (
             <WechatLogin
               appId={res.wechat.appid}
+              returnTo={returnTo}
               // onLogin={handleLoginSuccess} // 微信登录成功后通过回调页面 /callback 处理，不需要 onLogin 回调
             />
           ),

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/insmtx/corekg/apps/kecore/models/fs"
 	"github.com/insmtx/corekg/pkgs/global"
 	"github.com/ygpkg/yg-go/logs"
 	"github.com/ygpkg/yg-go/storage"
@@ -37,7 +38,7 @@ func (s *StrictOOXMLStrategy) ShouldConvert(ctx *gin.Context, fileInfo *storage.
 }
 
 func isStrictXLSX(ctx *gin.Context, storagePath string) (bool, error) {
-	storager, err := getUploadStorager(ctx)
+	storager, err := fs.GetForestStorage()
 	if err != nil {
 		return false, err
 	}

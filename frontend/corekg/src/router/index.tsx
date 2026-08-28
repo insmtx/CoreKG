@@ -91,6 +91,7 @@ const Callback = withSuspense(
   lazy(() => import('@/pages/other/callback/index')),
 )
 const Login = withSuspense(lazy(() => import('@/pages/other/login/index')))
+const CLIAuth = withSuspense(lazy(() => import('@/pages/other/cli-authorize/index')))
 const Register = withSuspense(
   lazy(() => import('@/pages/other/register/index')),
 )
@@ -177,6 +178,7 @@ const router = createBrowserRouter(
     },
     { path: '/global-pilot', element: <Global /> },
     { path: '/login', element: <Login /> },
+    { path: '/cli/authorize', element: <CLIAuth /> },
     { path: '/register', element: <Register /> },
     { path: '/callback', element: <Callback /> },
     { path: '/test', element: <Test /> },

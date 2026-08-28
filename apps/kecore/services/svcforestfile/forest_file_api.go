@@ -6,18 +6,10 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
 	"github.com/insmtx/corekg/apps/kecore/models/forest"
 	"github.com/insmtx/corekg/apps/kecore/models/foresttype"
-	"github.com/insmtx/corekg/apps/kecore/models/fs"
 	"github.com/insmtx/corekg/apps/kecore/models/keqa"
-	"github.com/insmtx/corekg/pkgs/global"
-	"github.com/insmtx/corekg/pkgs/utils/s3util"
-	"github.com/insmtx/corekg/version"
 	"github.com/ygpkg/yg-go/apis/apiobj"
-	"github.com/ygpkg/yg-go/config"
-	"github.com/ygpkg/yg-go/logs"
-	"github.com/ygpkg/yg-go/settings"
 	"github.com/ygpkg/yg-go/storage"
 )
 
@@ -109,35 +101,17 @@ func PreviewFileByURL(ctx context.Context, req *PreviewFileByURLRequest) (string
 		return "", fmt.Errorf("%w: %v", ErrGetFilePathFailed, err)
 	}
 
-	if version.DeployMode() != "" && version.DeployMode() != global.DeployModeOpenPO {
-		var cfg config.StorageConfig
-		if err = settings.GetYaml(settings.SettingGroupCore, storage.SettingPrefix+fs.PurposeKeFile, &cfg); err != nil {
-			return "", fmt.Errorf("%w: %v", ErrGetUploadConfigFailed, err)
-		}
-
-		ginCtx, ok := ctx.(*gin.Context)
-		if !ok {
-			logs.ErrorContextf(ctx, "resolve s3 endpoint error, keep original config endpoint[%s]: request context unavailable", cfg.S3.EndPoint)
-		} else if endpoint, resolveErr := s3util.ResolveS3Endpoint(req.Referer, ginCtx.Request); resolveErr != nil {
-			logs.ErrorContextf(ctx, "resolve s3 endpoint error, keep original config endpoint[%s]: %v", cfg.S3.EndPoint, resolveErr)
-		} else {
-			cfg.S3.EndPoint = endpoint
-		}
-		st, err := storage.NewStorageWithCfg(cfg)
-		if err != nil {
-			return "", fmt.Errorf("%w: %v", ErrCreateStorageFailed, err)
-		}
-
-		url, err := st.GetPresignedURL(http.MethodGet, *filePath)
-		if err != nil {
-			return "", fmt.Errorf("%w: %v", ErrGetPresignedURLFailed, err)
-		}
-		return url, nil
-	}
-
-	url, err := fs.Forest.GetPresignedURL(http.MethodGet, *filePath)
+	presigner, err := getPublicForestPresigner()
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrGetFileURLFailed, err)
+		return "", fmt.Errorf("%w: %v", ErrCreateStorageFailed, err)
 	}
-	return url, nil
+	method := http.MethodGet
+	url, err := presigner.GeneratePresignedURL(ctx, &storage.GeneratePresignedURLInput{
+		Method:      &method,
+		StoragePath: filePath,
+	})
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrGetPresignedURLFailed, err)
+	}
+	return *url, nil
 }

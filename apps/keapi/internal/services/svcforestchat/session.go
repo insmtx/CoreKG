@@ -22,7 +22,12 @@ func CreateChatSession(ctx *gin.Context, req *dtokeapi.CreateChatSessionRequest)
 		return nil, err
 	}
 
-	session, err := buildForestFileSession(ctx, model, req.Request.ForestFileIDs, req.Request.Name)
+	var session *chattype.ChatSession
+	if req.Request.ForestID > 0 {
+		session, err = buildForestSession(ctx, model, req.Request.ForestID, req.Request.Name)
+	} else {
+		session, err = buildForestFileSession(ctx, model, req.Request.ForestFileIDs, req.Request.Name)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -12,7 +12,7 @@ KEAPI 是 CoreKG 平台的**对外知识库 API 服务**，面向外部开发者
 |--------|-------------|---------|
 | 知识库管理 | 知识库生命周期 | CRUD、批量查询 |
 | 文档管理 | 文档上传与组织 | 上传（秒传/SHA256去重）、预览、目录、Chunk 查询 |
-| AI 对话 | 知识库问答 | OpenAI 兼容接口、流式 SSE、One-shot 模式、会话管理 |
+| AI 对话 | 知识库问答 | OpenAI 兼容接口、流式 SSE、知识库范围会话、One-shot 模式、会话管理 |
 | 知识检索 | 知识库搜索 | 多知识库聚合检索、文档/图片/视频分类结果 |
 | MCP Server | Agent 程序化操作 | 21 个 Tool，StreamableHTTP 协议 |
 
@@ -40,15 +40,16 @@ MCP 内部通过 HTTP 自调用自身 REST API，确保鉴权逻辑一致。
 
 ## API 路由
 
-所有接口均需 API Key 鉴权（`RequireAPIKeyPrivilege`）。
+知识库、文件、对话和检索接口均需 API Key 鉴权（`RequireAPIKeyPrivilege`）。CLI 设备授权的 Start、Info、Poll 为公开的短时流程接口；授权批准/拒绝由 account 服务的已登录路由完成。
 
 | 分组 | 代表接口 |
 |------|---------|
 | 知识库 | ListForest, BatchGetForest, CreateForest, UpdateForest, DeleteForest |
 | 文档 | ListFile, BatchGetFile, GetFileChunks, UploadFile, PreviewFileByURL |
 | 节点 | CreateDir, RenamePath, DeletePath |
-| 对话 | CreateChat, CreateChatMessage, chat/chat/completions（OpenAI 兼容） |
+| 对话 | CreateChat（支持 `forest_id` 或 `forest_file_ids`）、CreateChatMessage, chat/chat/completions（OpenAI 兼容） |
 | 检索 | Search |
+| CLI 身份 | WhoAmI、CLIAuthStart、CLIAuthInfo、CLIAuthPoll、RevokeCurrentAPIKey |
 | 监控 | metrics（GET，Prometheus） |
 
 ## 代码架构
@@ -84,6 +85,7 @@ apps/keapi/
 - **OpenAI 兼容**：`chat/chat/completions` 完全兼容 OpenAI 格式，支持流式/非流式
 - **无独立数据模型**：不维护自己的表，所有操作引用 kecore/kechat/kesearch 的 models/services
 - **文件秒传**：上传时计算 SHA256，命中则跳过写入
+- **知识库范围会话**：`CreateChat` 可传 `forest_id` 创建覆盖整个知识库的持久会话；仍兼容按 `forest_file_ids` 创建的会话
 - **One-shot 模式**：不传 session_id 时自动创建临时会话，问答后清理
 - **异步会话命名**：首次对话后异步调用 LLM 生成会话名称
 - **回答内容过滤**：过滤内部标记，只保留可见内容

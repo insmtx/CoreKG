@@ -74,7 +74,7 @@ func PreUploadFileForAPI(ctx *gin.Context, req *APIPreUploadFileRequest) ([]*API
 		})
 	}
 
-	files, errInfo := PreUploadFile(ctx, dtoReq)
+	files, errInfo := preUploadFile(ctx, dtoReq, preUploadForServer)
 	if errInfo != nil {
 		return nil, &APIErrorResponse{Code: errInfo.Code, Message: errInfo.Message}
 	}
@@ -144,7 +144,7 @@ func PrepareCoreFileForDirectUpload(ctx *gin.Context, uploadID uint) (*storage.F
 
 	// 若预上传阶段已创建分片上传任务，这里先显式取消对象存储侧的 multipart 状态。
 	if coreFile.UploadS3ID != "" {
-		uploadStorager, err := getUploadStorager(ctx)
+		uploadStorager, err := getInternalForestStorage()
 		if err != nil {
 			return nil, &APIErrorResponse{Code: 500, Message: "kecore_get_upload_storager_failed"}
 		}

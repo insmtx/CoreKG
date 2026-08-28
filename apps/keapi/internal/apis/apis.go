@@ -43,4 +43,9 @@ func RegistryRouter(eng *server.Router) {
 
 	// 对外检索接口
 	eng.P("keapi.Search", keapimiddleware.RequireAPIKeyPrivilege, keapisearchctl.ForestSearch)
+	eng.P("keapi.WhoAmI", keapimiddleware.RequireAPIKeyPrivilege, WhoAmI)
+	eng.P("keapi.CLIAuthStart", CLIAuthStart)
+	eng.P("keapi.CLIAuthInfo", CLIAuthInfo)
+	eng.P("keapi.CLIAuthPoll", CLIAuthPoll)
+	eng.P("keapi.RevokeCurrentAPIKey", keapimiddleware.RequireAPIKeyPrivilege, RevokeCurrentAPIKey)
 }

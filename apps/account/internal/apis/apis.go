@@ -27,6 +27,8 @@ func RegistryRouter(eng *server.Router) {
 	eng.P("account.LoginByEmail", LoginByEmail)
 	eng.P("account.RegisterThird", RegisterThird)
 	eng.P("account.ChooseUin", ChooseUin)
+	eng.PRequireLogin("account.CLIAuthApprove", CLIAuthApprove)
+	eng.PRequireLogin("account.CLIAuthDeny", CLIAuthDeny)
 	eng.P("account.GetOBOToken", GetOBOToken)
 	eng.P("account.LoginByPassword", accountmds.DecryptMD("request.password"), LoginByPassword)
 

@@ -20,11 +20,17 @@ type CreateChatSessionRequest struct {
 	Request struct {
 		ForestFileIDs       []uint `json:"forest_file_ids"`
 		LegacyForestFileIDs []uint `json:"forest_file_id,omitempty"`
+		ForestID            uint   `json:"forest_id,omitempty"`
 		Name                string `json:"name"`
 	} `json:"request"`
 }
 
 func (req *CreateChatSessionRequest) ValidCreateChatSession(resp *apiobj.BaseResponse) bool {
+	if req.Request.ForestID > 0 && (len(req.Request.ForestFileIDs) > 0 || len(req.Request.LegacyForestFileIDs) > 0) {
+		resp.Code = errcode.ErrCode_BadRequest
+		resp.Message = "keapi_chat_scope_conflict"
+		return false
+	}
 	if len(req.Request.ForestFileIDs) == 0 && len(req.Request.LegacyForestFileIDs) > 0 {
 		req.Request.ForestFileIDs = req.Request.LegacyForestFileIDs
 	}

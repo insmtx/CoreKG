@@ -14,9 +14,10 @@ declare global {
 
 interface WechatLoginProps {
   appId: string
+  returnTo?: string
 }
 
-const WechatLogin: React.FC<WechatLoginProps> = ({ appId }) => {
+const WechatLogin: React.FC<WechatLoginProps> = ({ appId, returnTo }) => {
   const [codeLoading, setCodeLoading] = useState(true)
   const { t } = useTranslation('pages')
   useMount(() => {
@@ -27,7 +28,10 @@ const WechatLogin: React.FC<WechatLoginProps> = ({ appId }) => {
     try {
       setCodeLoading(true)
       await loadWxLoginScript()
-      await getWxLoginCode(appId)
+      const callback = returnTo
+        ? `/callback?return_to=${encodeURIComponent(returnTo)}`
+        : '/callback'
+      await getWxLoginCode(appId, callback)
       setTimeout(() => {
         const qrcodeContainer = document.querySelector('#wxQrcode')
         const iframe = qrcodeContainer.getElementsByTagName('iframe')[0]

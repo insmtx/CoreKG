@@ -102,6 +102,15 @@ export const changeWx = (body: any) => send('admin.ChangeMyWechat', body)
 /** 获取用户全部uin */
 export const getAllUin = () => send('account.ListUin', {})
 
+export const approveCliAuth = (user_code: string) =>
+  send('account.CLIAuthApprove', { user_code })
+
+export const denyCliAuth = (user_code: string) =>
+  send('account.CLIAuthDeny', { user_code })
+
+export const getCliAuthInfo = (user_code: string) =>
+  send('keapi.CLIAuthInfo', { user_code })
+
 /** 新版本换绑微信 */
 export const changeWX_account = (body: { code: string }) =>
   send('account.BindUserWechat', body)

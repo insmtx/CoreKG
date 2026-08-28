@@ -75,6 +75,23 @@ docker compose up -d
 
 以上默认值已与各 `apps/*/conf/*/config.yaml.example` 保持一致；生产部署请勿使用这些默认值。
 
+### Docker Compose 启动 CoreKG 前端
+
+前端以独立 Nginx 容器运行，并通过同一站点代理 CoreKG API 与 MinIO。首次部署先执行一次初始化，再启动前端及其依赖：
+
+```bash
+# 首次初始化（完成后 keinit 正常退出）
+docker compose up --build keinit
+
+# 启动前端、corekg 及其依赖
+docker compose up -d --build frontend
+
+# 如需同时启动 pipeline、文档转换等全部服务
+docker compose up -d --build
+```
+
+浏览器访问 `http://localhost:3001`。前端将 `/v2/*`、`/v3/*` 转发到 `corekg:8080`，将 `/corekg-bucket/*` 转发到 `minio:9000`；`http://localhost:3001/healthz` 用于前端容器健康检查。本地 Compose 不包含 Coze 工作流前端，`/coze` 不在本部署方式的验收范围内。
+
 > 初始化所需补齐的环境变量与占位符清单（对话/视觉/Embedding 模型地址、JWT、PDF 转换服务等），及对应的初始化命令，见 **[docs/local-config-checklist.md](docs/local-config-checklist.md)**。
 
 **中间件镜像统一使用 yygu 自建镜像**（`registry.cn-beijing.aliyuncs.com/yygu/corekg` 与 `registry.yygu.cn/library`），与私有化 Helm 部署（corekg-chart）同一套镜像：`mysql_8.4.5`、`elasticsearch_8.18.1-2`（内置 IK 分词插件，无需额外 es-init 容器）、`redis_8.2`、`minio_RELEASE.2025-04-22T22-12-26Z`、`nebula-*_v3.8.0`、`nats:2.12.7`；corekg / pipeline / ketask 等业务镜像仍本地构建。可验证：
@@ -348,5 +365,4 @@ INSERT INTO `t1` (`id`, `name`) VALUES (1, 'a-xxxxyyyyzzzz-b');
 SET @t1_id = LAST_INSERT_ID();
 UPDATE `t1` SET `name` = REPLACE(`name`, 'xxxxyyyyzzzz', @yg_VAR_NAME) WHERE `id` = @t1_id;
 ```
-
 

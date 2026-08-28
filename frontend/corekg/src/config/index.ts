@@ -1,6 +1,10 @@
 import version from './version'
 
 const ENV = import.meta.env
+const loginUrl = (ENV.VITE_LOGIN_URL || window.location.origin).replace(
+  /\/$/,
+  '',
+)
 
 if (ENV.MODE == 'development') {
   console.log('version: ', version)
@@ -22,6 +26,6 @@ export default {
     }
     return `/v3/${url}`
   },
-  loginHub: `${ENV.VITE_LOGIN_URL}/hub`,
-  loginUrl: ENV.VITE_LOGIN_URL,
+  loginHub: `${loginUrl}/hub`,
+  loginUrl,
 }

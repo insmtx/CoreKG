@@ -26,20 +26,27 @@ import (
 	"github.com/insmtx/corekg/apps/kecore/services/svcexcelforest"
 	"github.com/insmtx/corekg/pkgs/global"
 	"github.com/insmtx/corekg/pkgs/utils/dbutil"
-	"github.com/insmtx/corekg/pkgs/utils/s3util"
-	"github.com/insmtx/corekg/version"
 	"github.com/ygpkg/yg-go/apis/errcode"
 	"github.com/ygpkg/yg-go/apis/runtime"
-	"github.com/ygpkg/yg-go/config"
 	"github.com/ygpkg/yg-go/logs"
-	"github.com/ygpkg/yg-go/settings"
 	"github.com/ygpkg/yg-go/storage"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
+type preUploadMode uint8
+
+const (
+	preUploadForBrowser preUploadMode = iota
+	preUploadForServer
+)
+
 // 文件上传
 func PreUploadFile(ctx *gin.Context, req *dtoforestfile.PreUploadFileRequest) (preUploadFiles []*dtoforestfile.PreUploadFileResponseItem, errInfo *dtoforestfile.ErrorResponse) {
+	return preUploadFile(ctx, req, preUploadForBrowser)
+}
+
+func preUploadFile(ctx *gin.Context, req *dtoforestfile.PreUploadFileRequest, mode preUploadMode) (preUploadFiles []*dtoforestfile.PreUploadFileResponseItem, errInfo *dtoforestfile.ErrorResponse) {
 	var (
 		parent    *foresttype.KnownowForestFile
 		err       error
@@ -56,11 +63,19 @@ func PreUploadFile(ctx *gin.Context, req *dtoforestfile.PreUploadFileRequest) (p
 		}
 	}
 
-	uploadStorager, err := getUploadStorager(ctx)
+	uploadStorager, err := getInternalForestStorage()
 	if err != nil {
 		// 获取上传存储失败
 		logs.ErrorContextf(ctx, "forest: PreUploadFile getUploadStorager failed,err = %v", err)
 		return nil, &dtoforestfile.ErrorResponse{Code: errcode.ErrCode_InternalError, Message: "kecore_get_upload_storager_failed"}
+	}
+	var publicPresigner presignedURLGenerator
+	if mode == preUploadForBrowser {
+		publicPresigner, err = getPublicForestPresigner()
+		if err != nil {
+			logs.ErrorContextf(ctx, "forest: PreUploadFile get public presigner failed,err = %v", err)
+			return nil, &dtoforestfile.ErrorResponse{Code: errcode.ErrCode_InternalError, Message: "kecore_get_upload_storager_failed"}
+		}
 	}
 
 	method := http.MethodPut
@@ -170,6 +185,9 @@ func PreUploadFile(ctx *gin.Context, req *dtoforestfile.PreUploadFileRequest) (p
 		fi.PublicURL = fs.Forest.GetPublicURL(fi.StoragePath, false)
 		// 计算分片上传配置
 		partSize, partCount := CalcOptimalPart(fi.Size)
+		if mode == preUploadForServer {
+			partSize, partCount = fi.Size, 1
+		}
 		fi.UploadChunkSize = partSize
 		fi.UploadChunkTotal = partCount
 		fi.Exists = false
@@ -194,7 +212,7 @@ func PreUploadFile(ctx *gin.Context, req *dtoforestfile.PreUploadFileRequest) (p
 
 		// 生成预签名 URL
 		uploadPartUrlMap := map[int]string{}
-		if presignedUrlCount < 20 {
+		if mode == preUploadForBrowser && presignedUrlCount < 20 {
 			presignedUrlNum := 1
 			if enableMultipart {
 				presignedUrlNum = fi.UploadChunkTotal
@@ -214,7 +232,7 @@ func PreUploadFile(ctx *gin.Context, req *dtoforestfile.PreUploadFileRequest) (p
 					input.PartNumber = &i
 					// TODO 验证hash与len
 				}
-				urlPtr, err := uploadStorager.GeneratePresignedURL(ctx, input)
+				urlPtr, err := publicPresigner.GeneratePresignedURL(ctx, input)
 				if err != nil {
 					logs.ErrorContextf(ctx, "get presigned url error: %v", err)
 					return nil, &dtoforestfile.ErrorResponse{
@@ -271,7 +289,7 @@ func UploadFileCallBack(ctx *gin.Context, req *dtoforestfile.UploadFileCallBackR
 			if len(req.Request.Parts) != coreFile.UploadChunkTotal {
 				return nil, &dtoforestfile.ErrorResponse{Code: errcode.ErrCode_BadRequest, Message: "parts_count_error"}
 			}
-			uploadStorager, err := getUploadStorager(ctx)
+			uploadStorager, err := getInternalForestStorage()
 			if err != nil {
 				logs.ErrorContextf(ctx, "forest: UploadFileCallBack failed,err = %v", err)
 				return nil, &dtoforestfile.ErrorResponse{Code: errcode.ErrCode_InternalError, Message: "kecore_get_upload_storager_failed"}
@@ -454,7 +472,7 @@ func RenewUploadUrl(ctx *gin.Context, req *dtoforestfile.RenewUploadUrlRequest) 
 		return nil, &dtoforestfile.ErrorResponse{Code: errcode.ErrCode_BadRequest, Message: "kecore_renew_upload_url_status_denied"}
 	}
 
-	uploadStorager, err := getUploadStorager(ctx)
+	uploadStorager, err := getPublicForestPresigner()
 	if err != nil {
 		logs.ErrorContextf(ctx, "forest: RenewUploadUrl GetUploadStorager failed, err = %v", err)
 		return nil, &dtoforestfile.ErrorResponse{Code: errcode.ErrCode_InternalError, Message: "kecore_get_upload_storager_failed"}
@@ -638,34 +656,6 @@ func buildPreviewFileEntity(ctx *gin.Context, coreFile *storage.FileInfo) (bool,
 	}
 
 	return true, fileEntity
-}
-
-func getUploadStorager(ctx *gin.Context) (st storage.Storager, err error) {
-	if version.DeployMode() != "" && version.DeployMode() != global.DeployModeOpenPO {
-		var cfg config.StorageConfig
-		if err = settings.GetYaml(settings.SettingGroupCore, storage.SettingPrefix+fs.PurposeKeFile, &cfg); err != nil {
-			// 获取上传配置失败
-			logs.ErrorContextf(ctx, "get storage config error: %v", err)
-			return nil, err
-		}
-
-		endpoint, resolveErr := s3util.ResolveS3Endpoint(ctx.GetHeader("Referer"), ctx.Request)
-		if resolveErr != nil {
-			logs.ErrorContextf(ctx, "resolve s3 endpoint error, keep original config endpoint[%s]: %v", cfg.S3.EndPoint, resolveErr)
-		} else {
-			cfg.S3.EndPoint = endpoint
-		}
-
-		st, err := storage.NewStorageWithCfg(cfg)
-		if err != nil {
-			// 创建存储器失败
-			logs.ErrorContextf(ctx, "create storage error: %v", err)
-			return nil, err
-		}
-		return st, nil
-	}
-
-	return fs.Forest, nil
 }
 
 func buildUploadFile(ctx *gin.Context, forestID uint, fileInfo *dtoforestfile.UploadFileItem, parent *foresttype.KnownowForestFile) (*storage.FileInfo, error) {

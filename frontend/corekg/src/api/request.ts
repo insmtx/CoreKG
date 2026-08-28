@@ -32,6 +32,7 @@ const whiteList = [
   'account.ForgotPassword',
   'account.RequestPasswordResetCode',
   'account.GetGlobalInfo',
+  'keapi.CLIAuthInfo',
   // 联系售前表单接口，/version 为公开页面，无需 token
   'forest.VersionUpgradeSendCode',
   'forest.VersionUpgradeVerify',

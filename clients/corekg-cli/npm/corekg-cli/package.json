@@ -1,0 +1,16 @@
+{
+  "name": "@insmtx/corekg-cli",
+  "version": "0.1.0",
+  "description": "CoreKG knowledge base command-line client",
+  "license": "Apache-2.0",
+  "bin": {
+    "corekg-cli": "bin/corekg-cli.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ]
+}

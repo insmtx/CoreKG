@@ -16,6 +16,14 @@ const Callback: React.FC = () => {
   const navigate = useNavigate()
   const { message } = App.useApp()
   const [searchParams] = useSearchParams()
+  const requestedReturnTo = searchParams.get('return_to')
+  const returnTo = requestedReturnTo?.startsWith('/cli/authorize')
+    ? requestedReturnTo
+    : '/'
+  const loginPath =
+    returnTo === '/'
+      ? '/login'
+      : `/login?return_to=${encodeURIComponent(returnTo)}`
 
   const [loginConfig, setLoginConfig] = useState({
     bg: '',
@@ -34,7 +42,7 @@ const Callback: React.FC = () => {
   })
 
   const handleLoginSuccess = () => {
-    navigate('/')
+    navigate(returnTo)
   }
 
   const [initLoading, setInitLoading] = useState(true)
@@ -76,7 +84,7 @@ const Callback: React.FC = () => {
         message.error(tM('loginFailedPleaseRelogin'))
         setInitLoading(false)
         setTimeout(() => {
-          navigate('/login')
+          navigate(loginPath)
         }, 1500)
         return
       }
@@ -94,14 +102,14 @@ const Callback: React.FC = () => {
             res = registerRes
           } catch (error) {
             setInitLoading(false)
-            navigate('/login')
+            navigate(loginPath)
             return
           }
         } else {
           message.error(tM('userHasNoIdentityPleaseContactAdminToAdd'))
           setInitLoading(false)
           setTimeout(() => {
-            navigate('/login')
+          navigate(loginPath)
           }, 1500)
           return
         }
@@ -110,7 +118,7 @@ const Callback: React.FC = () => {
       // 检查必要的字段是否存在
       if (!res.user_info) {
         setInitLoading(false)
-        navigate('/login')
+        navigate(loginPath)
         return
       }
 
@@ -150,7 +158,7 @@ const Callback: React.FC = () => {
     } catch (error) {
       console.log('login error', error)
       setInitLoading(false)
-      navigate('/login')
+      navigate(loginPath)
     }
   }
 
