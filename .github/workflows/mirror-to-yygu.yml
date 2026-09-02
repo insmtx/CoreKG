@@ -33,11 +33,15 @@ jobs:
           git fetch origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'
           echo "  exit=$?"
 
+          BRANCHES="$(git for-each-ref --format='%(refname:short)' refs/remotes/origin | wc -l | tr -d ' ')"
+          TAGS="$(git tag | wc -l | tr -d ' ')"
+          echo "  origin branches=${BRANCHES}, tags=${TAGS}"
+
           echo "[1/4] pushing all branches ..."
-          timeout 180 git push --force mirror 'refs/remotes/origin/*:refs/heads/*'; echo "  exit=$?"
+          timeout 900 git push --force mirror 'refs/remotes/origin/*:refs/heads/*'; echo "  exit=$?"
 
           echo "[2/4] pushing all tags ..."
-          timeout 180 git push --force --tags mirror; echo "  exit=$?"
+          timeout 900 git push --force --tags mirror; echo "  exit=$?"
 
           echo "[3/4] pruning branches removed upstream ..."
-          timeout 180 git push --force mirror --prune 'refs/remotes/origin/*:refs/heads/*'; echo "  exit=$?"
+          timeout 900 git push --force mirror --prune 'refs/remotes/origin/*:refs/heads/*'; echo "  exit=$?"
