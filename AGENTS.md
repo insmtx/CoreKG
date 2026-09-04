@@ -61,7 +61,7 @@ CoreKG（又名 `roc`）— Go 单体仓库，知识库 / RAG 对话服务。知
 
 ## 领域参考
 
-- `keapi` 同时提供 **MCP Server**，路径 `/v3/keapi/mcp`（StreamableHTTP），与 keapi HTTP 端口共用（默认 `:8086`），使用 API-Key 鉴权。21 个 Tool 及 curl 验证方式见 `README.md`。
+- `keapi` 同时提供 **MCP Server**，路径 `/v3/keapi/mcp`（StreamableHTTP），与 keapi HTTP 端口共用（默认 `:8086`），使用 API-Key 鉴权。21 个 Tool 及 curl 验证方式见 `docs/mcp-server.md`。
 - RAG/对话流程的深层架构（API → service → ChatWrapper 模式 → 8 步 rerank 管线 → Eino agents）记录在 `docs/core-business-flow.md`。修改对话/搜索内部逻辑前请先阅读。
 </content>
 </invoke>
