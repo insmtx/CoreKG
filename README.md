@@ -2,7 +2,7 @@
 
 <!--
   素材说明：
-  - badge（license / go / web / protocol-mcp）：仓库内置自包含 SVG，见 docs/images/badges/，不依赖外网。
+  - badge（license / go / web / protocol-mcp / website）：仓库内置自包含 SVG，见 docs/images/badges/，不依赖外网。
   - logo：docs/images/logo.svg。
   - architecture.png：系统架构图（当前正文用文字分层图代替）。
 -->
@@ -16,8 +16,9 @@
 ![Go](./docs/images/badges/go.svg)
 ![Web](./docs/images/badges/web.svg)
 ![Protocol](./docs/images/badges/protocol-mcp.svg)
+[![Website](./docs/images/badges/website.svg)](https://corekg.com/)
 
-**目录** · [项目简介](#项目简介) · [界面预览](#界面预览) · [核心特性](#核心特性) · [系统架构](#系统架构) · [快速开始](#快速开始) · [开发指南](#开发指南) · [MCP Server](#mcp-server) · [相关文档](#相关文档) · [贡献指南](#贡献指南) · [社区与支持](#社区与支持) · [许可证](#许可证)
+**目录** · [项目简介](#项目简介) · [界面预览](#界面预览) · [核心特性](#核心特性) · [系统架构](#系统架构) · [快速开始](#快速开始) · [开发指南](#开发指南) · [MCP Server](#mcp-server) · [生态与联动](#生态与联动) · [相关文档](#相关文档) · [贡献指南](#贡献指南) · [社区与支持](#社区与支持) · [许可证](#许可证)
 
 </div>
 
@@ -25,7 +26,9 @@
 
 ## 项目简介
 
-CoreKG 是一个面向企业与团队的知识平台。它把**知识库（Forest）**作为承载文档（File）的容器，对多格式文档完成解析与分块后写入检索引擎，并在此基础上提供**基于知识库的对话（Chat）**与**检索（Search）**：
+CoreKG 是一个面向企业与团队的知识平台。它是 [智慧矩阵（insmtx）](https://insmtx.com/)企业 AI 产品矩阵中的**企业知识引擎**（官网：[corekg.com](https://corekg.com/)），并与同矩阵的 **Lework**（企业级 AI 队友 / 数字员工）协同：CoreKG 提供知识供给，Lework 负责任务执行与经验沉淀。
+
+它把**知识库（Forest）**作为承载文档（File）的容器，对多格式文档完成解析与分块后写入检索引擎，并在此基础上提供**基于知识库的对话（Chat）**与**检索（Search）**：
 
 - 上传一份 Word / PDF / Excel / 图片文档，系统自动完成解析 → 拆 chunk → 向量化 → 入库；
 - 随后即可对整库文档提问，得到带引用依据的 RAG 回答，也可按知识库范围做语义检索；
@@ -61,7 +64,7 @@ CoreKG 是一个面向企业与团队的知识平台。它把**知识库（Fores
 
 <p align="center"><img src="./docs/images/ui-agent.png" width="800" alt="智能体" /></p>
 
-**知识图谱**（图谱浏览、检索分析、实体编辑）：
+**知识图谱**（实体关系可视化、节点详情卡、检索分析、引用溯源）：
 
 <p align="center"><img src="./docs/images/ui-knowledge-graph.png" width="800" alt="知识图谱" /></p>
 
@@ -276,6 +279,22 @@ go test ./apps/keapi/...            # 定向测试
 
 完整接入文档（三种客户端接入方式、Tool 列表、curl 验证）见 **[docs/mcp-server.md](docs/mcp-server.md)**。
 
+## 生态与联动
+
+CoreKG 是 [智慧矩阵（insmtx）](https://insmtx.com/)企业 AI 产品矩阵的一员，与同矩阵的其他产品协同，形成从能力供给到业务执行的闭环：
+
+| 产品 | 角色 | 说明 |
+|---|---|---|
+| **[CoreKG](https://corekg.com/)** | 企业 AI 知识引擎 | 多源知识接入、治理、理解与检索，提供知识问答、知识图谱、引用溯源（本仓库） |
+| **[Lework](https://lework.insmtx.com/)** | 企业级 AI 队友 / 数字员工 | 以真实项目成员身份接收与执行任务、交付成果，沉淀 Skill 与项目记忆 |
+| [CatAPI](https://catapi.insmtx.com/) | AI 能力开放平台 | 通过标准 API 提供文档解析 / OCR / 结构化提取等成熟 AI 能力 |
+| [Insmtx Cloud](https://insmtx.com/) | 大模型管理平台 | 模型接入、智能路由、权限与用量管理 |
+| [Insmtx 20](https://insmtx.com/all-in-one) | AI 大模型一体机 | 本地 GPU、模型预装、内网运行的私有化算力底座 |
+
+**数据流协同**：`企业数据 → CatAPI / CoreKG（知识与工具能力）→ Lework（任务执行与成果沉淀）→ 项目记忆 / Skill / 企业知识持续回流`。
+
+一言以蔽之：**CoreKG 让企业知识"看得见、找得到、答得准、用得上"，Lework 让这些知识与数字员工一起把任务真正做完**，两者共同构成智慧矩阵的企业智能化闭环。
+
 ## 相关文档
 
 | 文档 | 内容 |
@@ -287,6 +306,8 @@ go test ./apps/keapi/...            # 定向测试
 | [docs/pipeline-integration.md](docs/pipeline-integration.md) | 文档摄入（Python pipeline）集成说明 |
 | [docs/mcp-server.md](docs/mcp-server.md) | MCP Server 接入指南 |
 | [frontend/README.md](frontend/README.md) | 前端开发指南（CoreKG Web / Workflow Web） |
+| [corekg.com](https://corekg.com/) | CoreKG 官网（产品能力 / 技术架构 / 私有化方案） |
+| [insmtx.com/products](https://insmtx.com/products) | 智慧矩阵产品矩阵（CoreKG · Lework · CatAPI 等） |
 
 ## 贡献指南
 
