@@ -1,368 +1,307 @@
-# CoreKG —— 知识库 / RAG 对话服务
+<div align="center">
 
-CoreKG 是一个知识平台：以知识库（Forest）承载文档（File），并在其上提供基于知识库的对话（Chat）与检索（Search），以及配套的内部运营服务。服务端为 Go 单体仓库（module `github.com/insmtx/corekg`），摄入解析（拆 chunk / 向量化 / 写索引）由独立 Python pipeline 承担，文档/对话前端见 `frontend/`。知识库异步任务经 NATS JetStream 分发；`keapi` 额外提供 MCP Server 将知识库 API 封装为 MCP Tool。
+<!--
+  素材说明：
+  - badge（license / go / web / protocol-mcp）：仓库内置自包含 SVG，见 docs/images/badges/，不依赖外网。
+  - logo：docs/images/logo.svg。
+  - architecture.png：系统架构图（当前正文用文字分层图代替）。
+-->
+<img src="./docs/images/logo.svg" width="96" height="96" alt="CoreKG" />
 
-## 文档
+# CoreKG
 
-- [前端开发指南](frontend/README.md)
-- [本地开发指南](docs/local-development.md)
+开源知识库 / RAG 对话平台 —— 把散落的文档沉淀为**可检索、可对话、可被 Agent 直接调用**的知识资产。
 
-### 共用账号
+[![License](./docs/images/badges/license.svg)](./LICENSE)
+![Go](./docs/images/badges/go.svg)
+![Web](./docs/images/badges/web.svg)
+![Protocol](./docs/images/badges/protocol-mcp.svg)
 
-### 开发、测试环境
+**目录** · [项目简介](#项目简介) · [界面预览](#界面预览) · [核心特性](#核心特性) · [系统架构](#系统架构) · [快速开始](#快速开始) · [开发指南](#开发指南) · [MCP Server](#mcp-server) · [相关文档](#相关文档) · [贡献指南](#贡献指南) · [社区与支持](#社区与支持) · [许可证](#许可证)
 
-* 测试域名 example.com
-* 生产域名（自定）
+</div>
 
-## 开始之前
+---
 
-```bash
-git clone <本仓库>
-cd CoreKG-oss
-git config pull.rebase true
+## 项目简介
+
+CoreKG 是一个面向企业与团队的知识平台。它把**知识库（Forest）**作为承载文档（File）的容器，对多格式文档完成解析与分块后写入检索引擎，并在此基础上提供**基于知识库的对话（Chat）**与**检索（Search）**：
+
+- 上传一份 Word / PDF / Excel / 图片文档，系统自动完成解析 → 拆 chunk → 向量化 → 入库；
+- 随后即可对整库文档提问，得到带引用依据的 RAG 回答，也可按知识库范围做语义检索；
+- 通过 `keapi` 暴露 **OpenAI 兼容 API** 与 **MCP Server**，AI Agent、客户服务端可以直接把知识库当作自己的"外挂记忆"来调用。
+
+**核心概念**
+
+| 概念 | 说明 |
+|---|---|
+| Forest / 知识库 | 知识容器，分 file（文档库）与 data（Excel 数据库）两类 |
+| File / 文档节点 | 知识库内的文件或目录，支持树形结构组织 |
+| Chunk / 分段 | 文档经 RAG 解析后生成的文本块，存储于检索引擎，是检索与问答的基本单元 |
+| Chat / Search | 基于知识库的多模式对话与检索能力 |
+
+**技术形态**
+
+- 服务端为 **Go 单体仓库**（module `github.com/insmtx/corekg`，Go 1.24），多应用既可合并为 All-in-One 聚合单体，也可按需拆分为独立服务；
+- 文档摄入解析（analyser / chunker / 向量化）由独立的 **Python pipeline** 承担，Office → PDF 预览等任务由异步 worker 完成；
+- 知识库异步任务经 **NATS JetStream** 分发；知识图谱基于 Nebula Graph；
+- 前端包含 CoreKG Web（知识库 / 问答主界面）与 Workflow Web（智能体工作流编辑器），见 `frontend/`。
+
+## 界面预览
+
+**知识库**（Forest 管理、上传解析、智能分段、原文预览）：
+
+<p align="center"><img src="./docs/images/ui-knowledge-base.png" width="800" alt="知识库" /></p>
+
+**知识库问答**（多模式 RAG、可视化画布、原文索引）：
+
+<p align="center"><img src="./docs/images/ui-qa-chat.png" width="800" alt="知识库问答" /></p>
+
+**智能体**（创建工作流 / 插件 / 提示词模板）：
+
+<p align="center"><img src="./docs/images/ui-agent.png" width="800" alt="智能体" /></p>
+
+**知识图谱**（图谱浏览、检索分析、实体编辑）：
+
+<p align="center"><img src="./docs/images/ui-knowledge-graph.png" width="800" alt="知识图谱" /></p>
+
+**写作空间**（AI 文档助手、知识库关联与溯源）：
+
+<p align="center"><img src="./docs/images/ui-writing-space.png" width="800" alt="写作空间" /></p>
+
+## 核心特性
+
+### 知识库与文档
+
+| 能力 | 说明 |
+|---|---|
+| 知识库管理 | Forest 全生命周期管理，file / data 两种库类型，启用 / 禁用 |
+| 文档管理 | 上传（去重 / 秒传）、目录树、重命名移动、在线预览、Chunk 查看 |
+| 多格式解析 | PDF / Word / Markdown / TXT / HTML / Excel / PPT / 图片等，Office 文件可转 PDF 预览 |
+| 摄入管线 | 解析 → 拆 chunk → 向量化 → 写入检索引擎，任务经 NATS JetStream 异步执行，进度可追踪 |
+| 知识图谱 | 基于 Nebula Graph 的图谱存储与图谱问答（GraphSearch） |
+
+### 检索与对话
+
+| 能力 | 说明 |
+|---|---|
+| 混合检索 | Elasticsearch（内置 IK 中文分词）关键词 + 向量混合检索，支持文本 / 文档 / 图片 / 视频分类结果 |
+| 8 步 RAG 管线 | QA 精确匹配 → 查询改写 → 向量生成 → 混合检索 → Rerank → 上下文扩展 → 二次 Rerank → 结果组装 |
+| 多模式对话 | ForestAgent（ReAct + RAG，默认）、Forest（标准 RAG）、GraphSearch（图谱）、DirectModel（纯 LLM）、Excel（数据分析）等模式按会话路由 |
+| 引用溯源 | 问答基于证据生成结构化答案，返回可溯源的引用与上下文 |
+| 流式输出 | 内部 Web 流式问答与 OpenAI 兼容 SSE 流式接口 |
+| 多模态 | 视觉模型解析图文、图片 / 视频检索（依赖多模态模型配置） |
+
+### 集成与部署
+
+| 能力 | 说明 |
+|---|---|
+| OpenAI 兼容 API | `keapi` 提供 `/v3` 知识库 REST API（API Key 鉴权）与 `chat/completions` 兼容接口 |
+| MCP Server | `keapi` 内置 MCP Server（StreamableHTTP），21 个 Tool 覆盖知识库 / 文档 / 目录 / 对话 / 搜索，详见 [MCP Server](#mcp-server) |
+| 智能体工作流 | Workflow 应用基于 NATS 事件总线，前端提供工作流 / Agent 编排界面 |
+| 部署形态 | Docker Compose 一键部署；All-in-One 聚合单体与独立微服务两种运行形态 |
+| 初始化工具 | `keinit` 一次性完成建表、ES 索引、MinIO bucket、系统设置与模型配置 |
+| 统一身份 | `account` 提供账号、组织、API Key 与权限管理，作为全部服务鉴权基础 |
+
+## 系统架构
+
+```
+浏览器 / Agent / MCP Client
+        │  /v2、/v3（反向代理）
+        ▼
+前端 CoreKG Web :3001（内嵌 Workflow Web 编辑器）
+        ▼
+Go 服务层 —— corekg 聚合单体（All-in-One），或按需拆分为独立服务
+   · account   身份 / 组织 / 鉴权          · kecore  知识库 / 文档核心域
+   · kechat    AI 对话 / 多模式 RAG        · kesearch ES 混合检索
+   · keapi     对外 REST API + MCP Server  · ketask / workflow 异步任务与工作流
+        │
+        ├─▶ 摄入管线（异步任务 · NATS JetStream）
+        │       Python pipeline：analyser → chunker → 向量化 → 检索引擎
+        │       ketask doc2pdf：Office → PDF 预览
+        │
+        └─▶ 存储层
+                MySQL · Elasticsearch(IK) · Redis · MinIO · Nebula Graph
 ```
 
-## 本地开发起步（开源）
+架构图占位：`docs/images/architecture.png`。
 
-### 配置文件约定
+- 详细对话与 RAG 流程（API → Service → ChatWrapper 模式路由 → 8 步检索管线 → Eino Agent）见 [docs/core-business-flow.md](docs/core-business-flow.md)；
+- 平台分层与演进设计见 [docs/platform-architecture-design.md](docs/platform-architecture-design.md)。
 
-所有含密钥/连接串的运行配置一律**不入库**，仓库仅提供 `*.example` 模板：
+## 快速开始
 
-- Go 服务：`apps/<app>/conf/<env>/config.yaml.example`
-- 前端：`frontend/corekg/.env.development.example`、`.env.production.example`
-- TS worker：`apps/worker/.env.example`
-- Python pipeline：`apps/pipeline/config/*.yaml.example`
+### 环境要求
 
-使用方式（以 `corekg` 聚合服务为例）：
+- Git
+- Docker 与 Docker Compose（推荐的一键部署路径）
+- 仅使用宿主开发模式时：Go 1.24+、Python 3（venv）
+
+### 配置约定
+
+所有含密钥 / 连接串的运行配置一律**不入库**，仓库仅提供 `*.example` 模板；使用时复制为真实文件并填写 `change-me` 占位值：
 
 ```bash
+git clone https://github.com/insmtx/CoreKG.git
+cd CoreKG
+git config pull.rebase true
+
+# 以 corekg 服务为例（Go 服务模板位于 apps/<app>/conf/<env>/config.yaml.example）
 cp apps/corekg/conf/test/config.yaml.example apps/corekg/conf/test/config.yaml
-# 编辑 config.yaml，将 change-me 换成自己的真实值
+# 编辑 config.yaml，将 change-me 替换为真实值后：
 make run APP=corekg ENV=test
 ```
 
-> **两种启动模式**：corekg 既可用宿主机进程跑(上方 `make run`,读 `apps/corekg/conf/test/config.yaml` + `conf/test/core_setting.yaml`),也可以作为 **docker-compose 容器**跑(读 `apps/corekg/conf/docker/config.yaml` + `conf/docker/core_setting.yaml`)。因为 corekg 的运行连接全部来自 DB `core_settings`(由 keinit 初始化写入),两模式的 `core_setting.yaml` 连接字段不同(宿主用 `localhost:PORT`,容器用 compose 服务名)。两种模式的初始化与部署差异见 `docs/local-development.md`「4.1 两种启动模式（宿主机 / docker-compose 容器）」。
+> keinit 初始化所需补齐的模型地址 / 密钥占位清单见 [docs/local-config-checklist.md](docs/local-config-checklist.md)。
 
-### 构建多架构（amd64 / arm64）镜像
-
-默认单平台（`linux/amd64`）构建，保持向后兼容。需要同时产出两种架构时，通过 `BUILD_PLATFORMS` 指定并用 buildx 构建：
+### 方式一：Docker Compose 一键启动（推荐）
 
 ```bash
-# 1) 准备 docker-container driver 的 buildx builder（默认 docker driver 不支持多平台）
-docker buildx create --name corekg-multi --driver docker-container --platform linux/amd64,linux/arm64
-
-# 2) 多架构构建并推送（需具备 buildx 与目标 registry 的推送权限）
-make push-image APP=keapi BUILD_PLATFORMS='linux/amd64,linux/arm64' BUILDER=corekg-multi
-```
-
-- 单平台：仍走原 `docker build --platform`，行为不变。
-- 多平台：`BUILD_PLATFORMS` 含逗号时自动切到 `docker buildx build ... --platform <list> --push`。
-- 多平台要求 buildx builder 使用 `docker-container` driver（否则报 `Multi-platform build is not supported for the docker driver`）；通过 `BUILDER` 指定 builder。
-- 应用 Go 二进制的架构由各应用 `script/Dockerfile` 中的 `ARG TARGETARCH` + `GOOS=${TARGETOS} GOARCH=${TARGETARCH}` 决定（已统一），无需手工指定。
-
-### 本地依赖（MySQL / ES / Redis / MinIO / NATS）
-
-```bash
-docker compose up -d
-```
-
-本地基础环境（含中间件端口/凭据、如何启动、各服务初始化）请见 **[docs/local-development.md](docs/local-development.md)**。关键约定如下：
-
-- **宿主机端口统一偏移（规避本机已占用）**：MySQL `3308`(:3306)、Redis `6381`(:6379)、ES `9202`(:9200)/`9302`(:9300)、MinIO `9002`(:9000)/`9003`(:9001)、NATS `4225`(:4222)。
-- **所有中间件明文密码统一为 `123456`**（本地开发默认值）。
-- 容器之间经服务名+容器内端口互连；宿主机进程（各 `make run` 启动的 Go 服务）经上述映射端口访问。
-- 首次启动会通过 `scripts/mysql-docker-init.sh` 额外创建 `opencoze` 库。
-
-以上默认值已与各 `apps/*/conf/*/config.yaml.example` 保持一致；生产部署请勿使用这些默认值。
-
-### Docker Compose 启动 CoreKG 前端
-
-前端以独立 Nginx 容器运行，并通过同一站点代理 CoreKG API 与 MinIO。首次部署先执行一次初始化，再启动前端及其依赖：
-
-```bash
-# 首次初始化（完成后 keinit 正常退出）
+# 1) 补齐运行配置（见上方“配置约定”与初始化清单）
+# 2) 首次初始化：建表 / ES 索引 / MinIO bucket / 系统设置（完成后 keinit 正常退出）
 docker compose up --build keinit
-
-# 启动前端、corekg 及其依赖
-docker compose up -d --build frontend
-
-# 如需同时启动 pipeline、文档转换等全部服务
+# 3) 启动 corekg 聚合单体、前端及其依赖（含 pipeline 摄入 worker 等全部服务）
 docker compose up -d --build
 ```
 
-浏览器访问 `http://localhost:3001`。前端将 `/v2/*`、`/v3/*` 转发到 `corekg:8080`，将 `/corekg-bucket/*` 转发到 `minio:9000`；`http://localhost:3001/healthz` 用于前端容器健康检查。本地 Compose 不包含 Coze 工作流前端，`/coze` 不在本部署方式的验收范围内。
+启动完成后：
 
-> 初始化所需补齐的环境变量与占位符清单（对话/视觉/Embedding 模型地址、JWT、PDF 转换服务等），及对应的初始化命令，见 **[docs/local-config-checklist.md](docs/local-config-checklist.md)**。
+- 访问主界面 **http://localhost:3001**
+- corekg API 位于 **http://localhost:8080**（`/v2`、`/v3` 前缀）
+- 健康检查：`curl -fsS http://localhost:3001/healthz`
 
-**中间件镜像统一使用 yygu 自建镜像**（`registry.cn-beijing.aliyuncs.com/yygu/corekg` 与 `registry.yygu.cn/library`），与私有化 Helm 部署（corekg-chart）同一套镜像：`mysql_8.4.5`、`elasticsearch_8.18.1-2`（内置 IK 分词插件，无需额外 es-init 容器）、`redis_8.2`、`minio_RELEASE.2025-04-22T22-12-26Z`、`nebula-*_v3.8.0`、`nats:2.12.7`；corekg / pipeline / ketask 等业务镜像仍本地构建。可验证：
+中间件的端口 / 凭据 / 初始化细节见 [docs/local-development.md](docs/local-development.md)。
+
+### 方式二：宿主开发模式
+
+中间件与业务服务分离运行，适合日常开发调试（宿主机 corekg 与 pipeline worker）：
 
 ```bash
-# 确认官方 minio 同时发布 amd64 与 arm64
-docker manifest inspect minio/minio:latest | grep '"architecture"'
-# 起 minio 并等待 bucket 初始化完成（minio-init 会自动创建 corekg-bucket）
-docker compose up -d minio minio-init
-docker compose ps
+make dev-up            # 拉起中间件 + 宿主 corekg + pipeline / doc2pdf worker（见 Makefile）
+make dev-up-fe         # （可选）另起前端 Vite dev server :3001
 ```
 
-**NATS 是本项目唯一的消息中间件**：既承担知识库异步任务分发（`ketask`/`kecore`/`keapp` 的 JetStream 任务系统），也是 `workflow` 的事件总线（`workflow.mq.type: nats`）。无需额外部署 NSQ/Kafka/Pulsar/RocketMQ/RabbitMQ。
+> 首次运行前需先完成一次 keinit 初始化（建表 / ES 索引 / 系统设置）。两种启动模式的初始化差异与配置准备见 [docs/local-development.md](docs/local-development.md) 与 [docs/local-config-checklist.md](docs/local-config-checklist.md)。
 
-启用 `workflow` 应用时，直接运行即可——`apps/workflow/conf/test/config.yaml` 及 `apps/corekg/conf/test/config.yaml(.example)` 中嵌入的 workflow 配置块已把连接信息收敛为与 `docker-compose.yml` 一致的**字面值**（本地端口 +2、密码一律 `123456`），不再依赖任何环境变量：
+### 验证安装（知识库闭环）
 
-```bash
-# 依赖就绪：docker compose up -d
-make run APP=workflow ENV=test   # 或 make run APP=corekg ENV=test（聚合进程内拉启 workflow）
-```
-
-如需改动中间件端口/凭据，直接改 `docker-compose.yml` 与上述 `config.yaml` 里的字面值即可，无需导出环境变量。
-
-## 一键自动化验证（知识库闭环）
-
-`scripts/verify/verify-kb.sh` 可自动跑通**登录 → 新建知识库 → 上传文件 → 等待解析(拆 chunk/向量/入库) → 基于文件问答**的完整闭环。
-
-前提：中间件 + corekg + **pipeline 摄入 worker** 均已在跑（解析依赖 pipeline 的 analyser/chunker；
-若要验证 Office(.docx/.ppt/.ofd) 上传预览/解析，还需要 **doc2pdf(ketask)** worker）：
-`make dev-up` 会一并拉起。手动启动：
+`scripts/verify/verify-kb.sh` 自动跑通 **登录 → 新建知识库 → 上传文件 → 等待解析（拆 chunk / 向量化 / 入库）→ 基于文件问答** 的完整闭环：
 
 ```bash
-# 本地宿主模式（corekg 二进制 :8080，pipeline 跑在宿主机 venv）
-cd apps/pipeline && source .venv/bin/activate
-python doc_worker_main.py &   # 消费 ke.prase_pdf_task
-python chunk_worker_main.py & # 消费 ke.knowledge_task（拆 chunk + 向量 + 写 ES）
-cd ../..
-make local APP=ketask
-./bundles/ketask doc2pdf -c apps/ketask/conf/test/config.yaml \
-  -t ke.doc_to_pdf_task -b http://localhost:8080/ &  # 消费 ke.doc_to_pdf_task（Office → PDF 预览）
-./scripts/verify/verify-kb.sh --mode local --cleanup
-
-# docker-compose 全容器模式（含 doc2pdf 服务）
-docker compose -f docker-compose.pipeline.yml up -d --build
+# 容器模式（docker compose 全量启动后）
 ./scripts/verify/verify-kb.sh --mode compose --cleanup
+
+# 宿主模式（make dev-up 之后）
+./scripts/verify/verify-kb.sh --mode local --cleanup
 ```
 
-- 样例文件 `testdata/verify_sample.txt`、问题 `testdata/verify_question.txt` 可用 `--file/--question` 覆盖。
-- `--cleanup` 结束自动删除本次创建的知识库；`VERIFY_PARSE_TIMEOUT` 可调解析等待时长（默认 180s）。
-- 关键依赖：向量化走 `apps/pipeline/config/chunk_config(.docker).yaml` 的 `Embedding` 节点（默认指向真实可达的
-  `embed-qwen3.003.yygu.cn`）；无真实模型时可改用 `scripts/mock_embedding.py`。详见 `docs/local-development.md`。
+- 样例文件 `testdata/verify_sample.txt`、问题 `testdata/verify_question.txt` 可通过 `--file / --question` 覆盖；
+- `--cleanup` 结束后自动删除本次创建的知识库；`VERIFY_PARSE_TIMEOUT` 可调整解析等待时长（默认 180s）。
 
-# KEAPI MCP Server
+## 开发指南
 
-keapi 提供 MCP (Model Context Protocol) Server，将知识库 API 封装为 MCP Tool，供 AI 代理或客户服务端通过 MCP 协议调用。基于 [mark3labs/mcp-go](https://github.com/mark3labs/mcp-go)，使用 StreamableHTTP 传输协议（MCP 2025-03-26 规范），支持远程接入。
+### 仓库结构
 
-## 接入信息
+```
+CoreKG/
+├── apps/            # Go 应用（每个应用含 cmd/ 入口，可独立构建部署）
+├── pkgs/            # 共享库：global 常量/错误码、task/queue/jobs 任务体系、einotools 等
+├── clients/         # 独立客户端（如 corekg-cli）
+├── frontend/        # Web 前端：corekg（主界面）/ workflow（工作流编辑器）
+├── scripts/         # 开发/部署脚本、mysql 迁移、初始化镜像等
+├── docs/            # 业务 / 架构 / 部署文档
+├── resource/        # 静态资源与 i18n locales
+├── version/         # 构建信息（ldflags 注入）
+├── docker-compose.yml / Makefile / go.mod
+```
+
+### 服务一览
+
+| 应用 | 定位 | 说明 |
+|---|---|---|
+| `corekg` | 聚合单体（All-in-One） | 将 account / kecore / kechat / keapi / kesearch 等子应用挂载进单进程（默认 `:8080`），一键获得全功能 |
+| `account` | 统一身份 | 账号、组织 / 公司管理、登录鉴权、API Key，全部服务的鉴权基础 |
+| `kecore` | 核心知识域 | 知识库 / 文档全生命周期、目录树、知识图谱、写作空间、配额 |
+| `kechat` | AI 对话 | RAG 多模式问答、Agent 对话、模型管理，驱动知识库 / 图谱 / Excel 等问答场景 |
+| `kesearch` | 检索 | Elasticsearch 检索：知识库内搜索、全局搜索、多模态分类结果、Rerank |
+| `keapi` | 对外 API | `/v3` 知识库 REST API（API Key 鉴权）+ OpenAI 兼容对话 + MCP Server（默认 `:8086`） |
+| `keinit` | 初始化 CLI | 部署时一次性执行：建表、ES 索引、MinIO bucket、系统设置、API Key |
+| `ketask` | 异步任务 worker | 消费 JetStream 任务（如 Office → PDF 的 doc2pdf） |
+| `workflow` | 工作流 | 智能体工作流引擎，基于 NATS 事件总线，供前端编排 |
+| `apps/pipeline` | 文档摄入（Python） | analyser / chunker / 向量化，独立构建体系，经 `make pipeline-<target>` 委派 |
+| `apps/*` | 其余子服务 | keapp / websearch / webfetch 等，按需启用 |
+
+各服务职责细节见 `apps/<app>/README.md`。
+
+### 常用命令
+
+```bash
+# 构建 / 运行（APP 必传；ENV 默认 test）
+make local APP=keapi                # 构建本地二进制 → bundles/keapi
+make run APP=corekg ENV=test        # 构建并运行（读 apps/<app>/conf/<env>/config.yaml）
+make linux APP=keapi                # 交叉编译 Linux 二进制
+make build APP=keapi                # 生成文档 + 二进制
+make generate-docs APP=keapi        # 重新生成 swagger 文档（写入 apps/<app>/internal/docs）
+
+# 镜像
+make push-image APP=keapi           # 构建并推送镜像（CI 使用）
+
+# 本地环境
+make dev-up / dev-down / dev-status # 中间件 + 宿主进程一键启停
+make dev-up-fe                      # 前端 Vite dev server
+
+# 测试（注意：多数包级测试依赖真实中间件，建议定向运行）
+make test                           # go test -v ./...
+go test ./apps/keapi/...            # 定向测试
+```
+
+### 约定与注意
+
+- **模块路径**：所有内部 import 使用 `github.com/insmtx/corekg/...` 前缀；
+- **vendor**：依赖已 vendor 并入库，构建使用 vendor 模式；改依赖需 `go mod tidy && go mod vendor`；
+- **生成文件勿手改**：`apps/*/internal/docs`（swag 生成 swagger）等生成文件不要手动编辑；
+- **测试非隔离**：多数测试加载真实配置并连接 MySQL / ES / Redis，请先 `make dev-up` 再运行相关包级测试；
+- **数据库迁移脚本规范**：见 [docs/contributing/migration-spec.md](docs/contributing/migration-spec.md)；
+- 代码与工程约定（应用分层、路由风格、lint 配置）详见根目录 [AGENTS.md](AGENTS.md)。
+
+## MCP Server
+
+`keapi` 内置 **MCP (Model Context Protocol) Server**，将知识库 API 封装为 21 个 MCP Tool，AI 代理可直接通过标准协议操作知识库。
 
 | 项目 | 说明 |
 |---|---|
-| Endpoint URL | `http://<host>:<port>/v3/keapi/mcp`（与 keapi HTTP API 共用端口，默认 8086） |
-| 鉴权方式 | 每次请求携带 `Authorization: Bearer <api_key>` Header，与 HTTP API 共用同一套 API Key 鉴权 |
-| 传输协议 | StreamableHTTP（支持 POST/GET/DELETE） |
-| 依赖库 | mark3labs/mcp-go v0.43.0 |
+| Endpoint | `http://<host>:<port>/v3/keapi/mcp`（与 keapi HTTP API 共用端口，默认 `8086`） |
+| 传输 / 鉴权 | StreamableHTTP（MCP 2025-03-26）；`Authorization: Bearer <api_key>` |
+| Tools | 21 个，分 5 组：知识库管理 / 文档管理 / 目录操作 / 对话 / 搜索 |
 
-## 服务端接入配置
+完整接入文档（三种客户端接入方式、Tool 列表、curl 验证）见 **[docs/mcp-server.md](docs/mcp-server.md)**。
 
-客户服务端接入 keapi MCP Server 有三种方式：
+## 相关文档
 
-### 方式一：直接 URL 接入（最简单）
+| 文档 | 内容 |
+|---|---|
+| [docs/local-development.md](docs/local-development.md) | 本地基础环境：中间件端口 / 凭据、两种启动模式、初始化 |
+| [docs/local-config-checklist.md](docs/local-config-checklist.md) | keinit 初始化所需真实值清单（模型 / 密钥 / 地址） |
+| [docs/core-business-flow.md](docs/core-business-flow.md) | 对话 / RAG 核心业务与深层架构 |
+| [docs/platform-architecture-design.md](docs/platform-architecture-design.md) | 平台分层与架构演进设计 |
+| [docs/pipeline-integration.md](docs/pipeline-integration.md) | 文档摄入（Python pipeline）集成说明 |
+| [docs/mcp-server.md](docs/mcp-server.md) | MCP Server 接入指南 |
+| [frontend/README.md](frontend/README.md) | 前端开发指南（CoreKG Web / Workflow Web） |
 
-适用于支持 StreamableHTTP 的 MCP Client，直接指定 endpoint URL 和鉴权 Header：
+## 贡献指南
 
-```json
-{
-  "mcpServers": {
-    "keapi": {
-      "url": "http://<host>:<port>/v3/keapi/mcp",
-      "headers": {
-        "Authorization": "Bearer <your_api_key>"
-      }
-    }
-  }
-}
-```
+我们欢迎各种形式的贡献——Issue、文档、代码、使用反馈。
 
-### 方式二：Go 服务端接入（mark3labs/mcp-go Client）
+- **提 Issue**：前往 [GitHub Issues](https://github.com/insmtx/CoreKG/issues) 报告缺陷或提出功能建议；
+- **提 PR**：Fork 本仓库 → 创建功能分支 → 提交变更 → 发起 Pull Request。建议先开 Issue 讨论设计；
+- **开发约定**：动手前请阅读根目录 [AGENTS.md](AGENTS.md)（仓库结构、工程与代码规范）与上方[开发指南](#开发指南)；
+- **数据库迁移**：遵循 [docs/contributing/migration-spec.md](docs/contributing/migration-spec.md)（已发布脚本不可修改，通过新版本脚本实现变更）。
 
-适用于 Go 服务端程序，使用 mcp-go Client 库连接：
+## 社区与支持
 
-```go
-import (
-    "github.com/mark3labs/mcp-go/client"
-    "github.com/mark3labs/mcp-go/mcp"
-)
+- 使用问题 / 缺陷报告：[GitHub Issues](https://github.com/insmtx/CoreKG/issues)
+- 功能需求与讨论：同上，请带 `feature` / `discussion` 标签发起
 
-func connectKEAPIMCP(apiKey string) (*client.Client, error) {
-    mcpClient := client.NewStreamableHTTPClient("http://<host>:<port>/v3/keapi/mcp",
-        client.WithStreamableHTTPHeaders(map[string]string{
-            "Authorization": "Bearer " + apiKey,
-        }),
-    )
+## 许可证
 
-    ctx := context.Background()
-    session, err := mcpClient.Initialize(ctx, mcp.InitializeRequest{
-        Params: mcp.InitializeParams{
-            ClientInfo: mcp.Implementation{
-                Name:    "my-app",
-                Version: "1.0.0",
-            },
-        },
-    })
-    if err != nil {
-        return nil, err
-    }
-    // session 可用于后续 CallTool / ListTools 等操作
-    return mcpClient, nil
-}
-```
-
-### 方式三：eino-ext MCP 工具接入
-
-适用于使用 eino AI 框架的服务端，项目已依赖 `cloudwego/eino-ext/components/tool/mcp`：
-
-```go
-import (
-    "github.com/cloudwego/eino-ext/components/tool/mcp"
-)
-
-func createKEAPIMCPTool(apiKey string) (*mcp.Tool, error) {
-    tool, err := mcp.GetTool(ctx, &mcp.Config{
-        URL: "http://<host>:<port>/v3/keapi/mcp",
-        Headers: map[string]string{
-            "Authorization": "Bearer " + apiKey,
-        },
-    }, "search") //指定要使用的 Tool 名称，如 "search"
-    if err != nil {
-        return nil, err
-    }
-    return tool, nil
-}
-```
-
-## 可用 Tool 列表
-
-keapi MCP Server 提供全部 21 个 Tool，按功能分为 5 组：
-
-### 知识库管理 (Forest)
-
-| Tool Name | 描述 | 必填参数 |
-|---|---|---|
-| `list_forest` | 列出知识库列表 | offset, limit |
-| `batch_get_forest` | 批量查询知识库信息 | forest_ids |
-| `create_forest` | 创建知识库 | name |
-| `update_forest` | 更新知识库信息 | forest_id, name 或 description |
-| `delete_forest` | 删除知识库 | forest_id |
-
-### 文档管理 (File)
-
-| Tool Name | 描述 | 必填参数 |
-|---|---|---|
-| `list_file` | 列出知识库下的文档列表 | forest_id |
-| `batch_get_file` | 批量查询文档信息 | forest_file_ids |
-| `get_file_chunks` | 查询文档的 Chunk 分段内容 | forest_file_id, chunk_sequences |
-| `upload_file` | 上传文档到知识库（文件内容需 base64 编码） | forest_id, file_name, file_base64 |
-| `preview_file_url` | 获取文档的预览或下载 URL | forest_file_id |
-
-### 目录操作 (Node)
-
-| Tool Name | 描述 | 必填参数 |
-|---|---|---|
-| `create_dir` | 在知识库中创建文件夹 | forest_id, name |
-| `rename_path` | 重命名文件或文件夹 | forest_file_id, name |
-| `delete_path` | 删除文件或文件夹 | forest_file_ids |
-
-### 对话 (Chat)
-
-| Tool Name | 描述 | 必填参数 |
-|---|---|---|
-| `create_chat` | 创建对话会话，关联指定文档 | forest_file_ids |
-| `batch_get_chat_info` | 批量查询对话会话信息 | session_ids |
-| `update_chat_name` | 更新对话会话名称 | session_id, name |
-| `delete_chat` | 删除对话会话 | session_id |
-| `create_chat_message` | 在对话会话中创建用户消息 | session_id, content |
-| `list_chat_messages` | 查询对话会话的消息列表 | session_id |
-| `chat_completions` | 基于知识库文档进行对话补全（非流式） | forest_file_ids 或 session_id |
-
-### 搜索 (Search)
-
-| Tool Name | 描述 | 必填参数 |
-|---|---|---|
-| `search` | 在知识库中检索相关内容 | forest_ids, query |
-
-## 注意事项
-
-- **chat_completions** 强制 `stream=false`，不支持 MCP 层面的流式输出，返回完整对话结果
-- **upload_file** 需将文件内容 base64 编码后通过 `file_base64` 参数传入，同时需指定 `file_name`
-- **preview_file_url** 返回的预览 URL 由客户端自行访问，URL 有效期有限
-- **鉴权** 所有 MCP Tool 调用均需有效的 API Key，无效或过期 Key 将返回 `unauthorized` 错误
-- **端口共用** MCP Server 与 keapi HTTP API 共用同一服务端口，MCP endpoint 路径为 `/v3/keapi/mcp`
-
-## 快速验证
-
-使用 curl 验证 MCP Server 连通性：
-
-```bash
-# 1. Initialize 建立会话
-curl -i -X POST "http://127.0.0.1:8086/v3/keapi/mcp" \
-  -H "Authorization: Bearer <your_api_key>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc":"2.0",
-    "id":1,
-    "method":"initialize",
-    "params":{
-      "protocolVersion":"2025-03-26",
-      "capabilities":{},
-      "clientInfo":{
-        "name":"curl",
-        "version":"1.0"
-      }
-    }
-  }'
-
-# 2. 使用返回的 mcp-session-id 调用 Tool（替换为实际 session id）
-curl -s -X POST "http://127.0.0.1:8086/v3/keapi/mcp" \
-  -H "Authorization: Bearer <your_api_key>" \
-  -H "Content-Type: application/json" \
-  -H "mcp-session-id: mcp-session-<your_session_id>" \
-  -d '{
-    "jsonrpc":"2.0",
-    "id":2,
-    "method":"tools/call",
-    "params":{
-      "name":"list_forest",
-      "arguments":{
-        "limit":20
-      }
-    }
-  }'
-```
-
-# 数据库迁移脚本规范
-
-## 脚本规范
-
-### MySQL
-* **已发布版本的脚本除了有导致完全无法执行的语法错误外，都不允许修改，一律通过新版本变更实现回滚**
-* **脚本文件仅执行一遍**
-* 文件名： 全小写、数字、下划线
-* ${version} 主版本号，可重复值，例如 v1.6
-* ${seq} 序号，可重复值，例如 1, 2, 3
-* ${action} 动作，例如 create_table，insert_data，alter_table 等
-文件： `/scripts/mysql/${version}_${seq}__${action}.sql`
-实例： `/scripts/mysql/v1.6_1__create_table.sql`， `/scripts/mysql/v1.6_2__insert_data.sql`， `/scripts/mysql/v1.7_1__alter_table.sql`
-
-#### 脚本规范
-##### 索引
-前缀 `uk_`, `idx_`
-
-##### 对于多条有外键关联的数据插入的脚本，例如
-```sql
-INSERT INTO `t1` (`id`, `name`) VALUES (1, 'a');
-SET @t1_id = LAST_INSERT_ID();
-INSERT INTO `t2` (`id`, `name`, `t1_id`) VALUES (1, 'b', @t1_id);
-```
-
-##### 对于需要用变量替换字段中部分内容的，使用占位符先创建，再替换，例如
-```sql
-INSERT INTO `t1` (`id`, `name`) VALUES (1, 'a-xxxxyyyyzzzz-b');
-SET @t1_id = LAST_INSERT_ID();
-UPDATE `t1` SET `name` = REPLACE(`name`, 'xxxxyyyyzzzz', @yg_VAR_NAME) WHERE `id` = @t1_id;
-```
-
+CoreKG 依据 **[CoreKG Open Source License](./LICENSE)** 授权：以 Apache License 2.0 为基础，附加若干商业使用条件（英文文本具有法律效力）。涉及多租户 SaaS、知识图谱等特定商业化情形时，需联系维护者取得商业许可，详见 LICENSE 文件。
