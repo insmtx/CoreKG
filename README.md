@@ -286,7 +286,7 @@ CoreKG 是 [智慧矩阵（insmtx）](https://insmtx.com/)企业 AI 产品矩阵
 | 产品 | 角色 | 说明 |
 |---|---|---|
 | **[CoreKG](https://corekg.com/)** | 企业 AI 知识引擎 | 多源知识接入、治理、理解与检索，提供知识问答、知识图谱、引用溯源（本仓库） |
-| **[Lework](https://lework.insmtx.com/)** | 企业级 AI 队友 / 数字员工 | 以真实项目成员身份接收与执行任务、交付成果，沉淀 Skill 与项目记忆 |
+| **[Lework](https://lework.ai/)** | 企业级 AI 队友 / 数字员工 | 以真实项目成员身份接收与执行任务、交付成果，沉淀 Skill 与项目记忆 |
 | [CatAPI](https://catapi.insmtx.com/) | AI 能力开放平台 | 通过标准 API 提供文档解析 / OCR / 结构化提取等成熟 AI 能力 |
 | [Insmtx Cloud](https://insmtx.com/) | 大模型管理平台 | 模型接入、智能路由、权限与用量管理 |
 | [Insmtx 20](https://insmtx.com/all-in-one) | AI 大模型一体机 | 本地 GPU、模型预装、内网运行的私有化算力底座 |
