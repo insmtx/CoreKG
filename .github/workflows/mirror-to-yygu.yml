@@ -1,10 +1,11 @@
 name: Mirror to git.yygu.cn
 
-# 同步策略（GitHub 为代码权威来源）：
-# - 普通分支（main、docs/*、feature/*、fix/* 等）：强制对齐 GitHub；GitHub 上已删除的分支同步删除。
-# - release* 分支：内部专属命名空间，永不删除；yygu 独有时保留不动；
-#   两边都存在时只接受 fast-forward，分叉则告警跳过（可用 workflow_dispatch 手动强制）。
+# 同步策略（GitHub 为代码权威来源；镜像只增不删）：
+# - 普通分支：GitHub 上有的强制对齐；yygu 独有的分支一律保留，不做任何删除。
+# - release* 分支（内部专属命名空间）：yygu 独有时保留不动；两边都存在时只接受 fast-forward，
+#   分叉则告警跳过（可用 workflow_dispatch 的 force_release 手动强制）。
 # - tag：强制推送；yygu 独有的 tag 不删除。
+# - 单个 ref 失败不中断，末尾汇总并以非零退出（失败项写入 Step Summary）。
 
 on:
   workflow_dispatch:
@@ -24,7 +25,7 @@ on:
 permissions:
   contents: read
 
-# 串行执行，避免两次镜像并发时互相覆盖/误删刚创建的分支
+# 串行执行，避免两次镜像并发时互相覆盖
 concurrency:
   group: mirror-to-yygu
   cancel-in-progress: false
@@ -44,19 +45,20 @@ jobs:
           FORCE_RELEASE: ${{ inputs.force_release }}
         run: |
           set -euo pipefail
+          FAILED=()
 
           echo "::group::configure mirror remote"
           git remote remove mirror 2>/dev/null || true
           git remote add mirror "https://oauth2:${YYGU_TOKEN}@git.yygu.cn/corekg/corekg.git"
           echo "::endgroup::"
 
-          echo "[1/4] fetching origin & mirror refs ..."
-          # --prune 保证 origin/* 与 GitHub 实际分支一致，避免残留的跟踪 ref 干扰后续删除判断
+          echo "[1/3] fetching refs ..."
+          # --prune 保证 origin/* 与 GitHub 实际分支一致，避免 GitHub 已删除的分支被重新推上去
           git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'
           # --no-tags：避免把 yygu 独有的 tag 自动跟随拉到本地，干扰后续 tag 推送
           git fetch --no-tags mirror '+refs/heads/*:refs/remotes/mirror/*'
 
-          # release* 视为内部专属命名空间：不删除、不静默覆盖
+          # release* 视为内部专属命名空间：不静默覆盖
           # 如需豁免更多命名空间（如 hotfix/*），在此追加 case 分支
           is_release() {
             case "$1" in
@@ -65,8 +67,8 @@ jobs:
             esac
           }
 
-          echo "[2/4] syncing branches ..."
-          git for-each-ref --format='%(refname)' refs/remotes/origin | while read -r ref; do
+          echo "[2/3] syncing branches (yygu 独有分支保留，不删除任何分支) ..."
+          while read -r ref; do
             # 跳过 symbolic ref（refs/remotes/origin/HEAD），否则会被当成名为 HEAD 的分支推上去
             case "$ref" in
               refs/remotes/origin/HEAD) continue ;;
@@ -75,42 +77,49 @@ jobs:
 
             if ! is_release "$branch"; then
               echo "  force: ${branch}"
-              timeout 900 git push --force mirror "refs/remotes/origin/${branch}:refs/heads/${branch}"
+              if ! timeout 900 git push --force mirror "refs/remotes/origin/${branch}:refs/heads/${branch}"; then
+                FAILED+=("branch ${branch}: force push failed")
+              fi
               continue
             fi
 
             # GitHub 新建的 release 分支：yygu 上还没有，直接创建
             if ! git show-ref --verify --quiet "refs/remotes/mirror/${branch}"; then
               echo "  create: ${branch}"
-              timeout 900 git push mirror "refs/remotes/origin/${branch}:refs/heads/${branch}"
+              if ! timeout 900 git push mirror "refs/remotes/origin/${branch}:refs/heads/${branch}"; then
+                FAILED+=("branch ${branch}: create failed")
+              fi
               continue
             fi
 
             if git merge-base --is-ancestor "refs/remotes/mirror/${branch}" "refs/remotes/origin/${branch}"; then
               echo "  fast-forward: ${branch}"
-              timeout 900 git push mirror "refs/remotes/origin/${branch}:refs/heads/${branch}"
+              if ! timeout 900 git push mirror "refs/remotes/origin/${branch}:refs/heads/${branch}"; then
+                FAILED+=("branch ${branch}: fast-forward push failed")
+              fi
             elif [ "${FORCE_RELEASE:-false}" = "true" ]; then
               echo "::warning::强制覆盖 ${branch}，将丢弃 yygu 侧独有提交"
-              timeout 900 git push --force mirror "refs/remotes/origin/${branch}:refs/heads/${branch}"
+              if ! timeout 900 git push --force mirror "refs/remotes/origin/${branch}:refs/heads/${branch}"; then
+                FAILED+=("branch ${branch}: force push failed")
+              fi
             else
               echo "::warning::${branch} 在 yygu 与 GitHub 已分叉，跳过同步"
             fi
-          done
+          done < <(git for-each-ref --format='%(refname)' refs/remotes/origin)
 
-          echo "[3/4] pruning branches removed on GitHub (main / release* excluded) ..."
-          git ls-remote --heads mirror 'refs/heads/*' | while read -r _ ref; do
-            branch="${ref#refs/heads/}"
-            case "$branch" in
-              main|release*) continue ;;
-            esac
-            if git show-ref --verify --quiet "refs/remotes/origin/${branch}"; then
-              continue
-            fi
-            echo "  delete orphan branch: ${branch}"
-            timeout 900 git push mirror ":refs/heads/${branch}"
-          done
+          echo "[3/3] pushing tags ..."
+          if ! timeout 900 git push --force --tags mirror; then
+            FAILED+=("tags: push failed")
+          fi
 
-          echo "[4/4] pushing tags ..."
-          timeout 900 git push --force --tags mirror
+          if [ "${#FAILED[@]}" -gt 0 ]; then
+            echo "==== ${#FAILED[@]} 项同步失败 ===="
+            printf '  %s\n' "${FAILED[@]}"
+            {
+              echo "### 镜像同步失败项（${#FAILED[@]}）"
+              printf -- '- %s\n' "${FAILED[@]}"
+            } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            exit 1
+          fi
 
           echo "mirror sync done"
