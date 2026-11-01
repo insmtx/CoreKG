@@ -102,6 +102,11 @@ arch-test:
 
 .PHONY: arch-test
 
+route-inventory:
+	./scripts/inventory-routes.sh
+
+.PHONY: route-inventory
+
 generate-docs: check-app
 	-which swag || go install github.com/swaggo/swag/cmd/swag@latest
 	-swag i --parseDependency --parseInternal -g app.go --output ./apps/${APP}/internal/docs --dir ./apps/${APP} --outputTypes=go --instanceName ${APP}
