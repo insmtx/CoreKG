@@ -97,6 +97,11 @@ test-indocker:
 	-w /go/src/${PKGDIR} \
 	golang:1.24 make test
 
+arch-test:
+	$(GO) test ./internal/arch ./internal/config ./internal/api/...
+
+.PHONY: arch-test
+
 generate-docs: check-app
 	-which swag || go install github.com/swaggo/swag/cmd/swag@latest
 	-swag i --parseDependency --parseInternal -g app.go --output ./apps/${APP}/internal/docs --dir ./apps/${APP} --outputTypes=go --instanceName ${APP}
