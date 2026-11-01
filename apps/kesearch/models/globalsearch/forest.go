@@ -7,6 +7,7 @@ import (
 	"github.com/insmtx/corekg/apps/kecore/models/foresttype"
 	"github.com/insmtx/corekg/apps/kesearch/models/essearch"
 	"github.com/insmtx/corekg/pkgs/utils/dbutil"
+	"github.com/insmtx/corekg/pkgs/utils/sqlutil"
 	"github.com/ygpkg/yg-go/logs"
 )
 
@@ -84,9 +85,9 @@ func (wrapper GlobalSearchWrapper) FindForestWithKeywords() ([]*SearchForestType
 
 	query = query.Where("("+
 		// 创建者或管理员
-		"(forest.uin = ? AND FIND_IN_SET(?, forest.manager_ids) > 0) OR "+
+		"(forest.uin = ? AND "+sqlutil.ContainsCSV("forest.manager_ids")+") OR "+
 		// 管理员身份
-		"FIND_IN_SET(?, forest.manager_ids) > 0 OR "+
+		sqlutil.ContainsCSV("forest.manager_ids")+" OR "+
 		// 公司公开
 		"(forest.public_scope = ? AND forest.company_id = ?) OR "+
 		// 自定义公开

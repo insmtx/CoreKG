@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	baselineFindInSet   = 3
+	baselineFindInSet   = 0
 	baselineRegexp      = 2
 	baselineMySQLTypTag = 218
 )

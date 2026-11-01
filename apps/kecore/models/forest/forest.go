@@ -20,6 +20,7 @@ import (
 	"github.com/insmtx/corekg/pkgs/task"
 	"github.com/insmtx/corekg/pkgs/utils"
 	"github.com/insmtx/corekg/pkgs/utils/dbutil"
+	"github.com/insmtx/corekg/pkgs/utils/sqlutil"
 	"github.com/ygpkg/yg-go/apis/apiobj"
 	"github.com/ygpkg/yg-go/config"
 	"github.com/ygpkg/yg-go/dbtools/estool"
@@ -943,7 +944,7 @@ func CanUseForest(ctx context.Context, frsID, uin, companyID uint) bool {
 		Where("f.id = ?", frsID).
 		Joins("LEFT JOIN "+foresttype.TableNameKnownowForestPublicScope+" ps ON f.id = ps.forest_id AND ps.deleted_at IS NULL").
 		Where("("+
-			"(FIND_IN_SET(?,f.manager_ids) > 0) OR"+
+			"("+sqlutil.ContainsCSV("f.manager_ids")+") OR"+
 			"(f.public_scope = ? AND f.company_id = ?) OR"+
 			"(f.public_scope = ? AND f.uin = ?) OR"+
 			"(f.public_scope = ? AND ps.scope_type = ? AND ps.scope_id = ?) OR"+
