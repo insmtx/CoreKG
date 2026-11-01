@@ -1,0 +1,43 @@
+profile: personal
+capabilities:
+  knowledge: true
+  chat: true
+  search: true
+  graph: false
+  ocr: false
+  video: false
+  writing: false
+  mcp: false
+  billing: false
+  external_datasource: false
+infra:
+  db:
+    driver: postgres
+    dsn: postgres://corekg:corekg@127.0.0.1:5432/corekg?sslmode=disable
+  vector:
+    driver: pgvector
+  keyword:
+    driver: postgres_fts
+  object:
+    driver: localdir
+    root: ./data/objects
+  cache:
+    driver: memory
+  lock:
+    driver: db
+  stream:
+    driver: memory
+  queue:
+    driver: db
+  embedding:
+    driver: http
+    url: http://127.0.0.1:11434/v1/embeddings
+  rerank:
+    driver: none
+  llm:
+    driver: http
+    url: http://127.0.0.1:11434/v1
+  parser:
+    driver: local
+  graph:
+    driver: none

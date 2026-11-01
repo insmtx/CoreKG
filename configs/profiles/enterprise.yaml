@@ -1,0 +1,53 @@
+profile: enterprise
+capabilities:
+  knowledge: true
+  chat: true
+  search: true
+  graph: true
+  ocr: true
+  video: false
+  writing: true
+  mcp: true
+  billing: true
+  external_datasource: true
+infra:
+  db:
+    driver: postgres
+    dsn: postgres://corekg:corekg@127.0.0.1:5432/corekg?sslmode=disable
+  vector:
+    driver: elasticsearch
+    addr: http://127.0.0.1:9200
+  keyword:
+    driver: elasticsearch
+    addr: http://127.0.0.1:9200
+  object:
+    driver: s3
+    url: http://127.0.0.1:9000
+    bucket: corekg
+  cache:
+    driver: redis
+    addr: 127.0.0.1:6379
+  lock:
+    driver: redis
+    addr: 127.0.0.1:6379
+  stream:
+    driver: redis
+    addr: 127.0.0.1:6379
+  queue:
+    driver: nats
+    url: nats://127.0.0.1:4222
+  embedding:
+    driver: http
+    url: http://127.0.0.1:11434/v1/embeddings
+  rerank:
+    driver: http
+    url: http://127.0.0.1:8090/rerank
+  llm:
+    driver: openai
+    url: https://api.openai.com/v1
+  parser:
+    driver: http
+    url: http://127.0.0.1:8091
+  graph:
+    driver: nebulagraph
+    addr: 127.0.0.1:9669
