@@ -92,7 +92,6 @@ results/
 /apis/docs/docs.go
 /apis/docs/swagger.json
 /apis/docs/swagger.yaml
-cmd/
 
 # ============================================================================
 # 敏感配置文件（含密钥 / 连接串）：一律不入库，仅提交 *.example。
