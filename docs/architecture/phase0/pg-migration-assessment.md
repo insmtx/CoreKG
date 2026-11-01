@@ -1,6 +1,8 @@
 # MySQL → PostgreSQL 迁移评估
 
-> 元信息：Phase 0 / Task 12 产出。评估对象：系统库 5 个 schema（`core`、`account`、`knownow`、`chat`、`sale`）从 MySQL 到 PostgreSQL 的结构迁移与 ETL 方案。本文的代码事实均引用当前 `phase0-foundation` 分支（HEAD `1a6b913a6`）的文件路径；**本文不含任何来自生产/测试库的实测数值**（原因见第 1 节），所有行数、表数、列数、warning 数以 Phase 4 的 inventory 命令产出为准。
+> 元信息：Phase 0 / Task 12 产出。评估对象：系统库 5 个 schema（`core`、`account`、`knownow`、`chat`、`sale`）从 MySQL 到 PostgreSQL 的结构迁移与 ETL 方案。本文的代码事实均引用 `phase0-foundation` 分支的文件路径（代码事实核定于 commit `1a6b913a6`；其后至本次修订的提交仅改动文档，未改动 `apps/`/`pkgs/`/`cmd/` 的代码事实）；**本文不含任何来自生产/测试库的实测数值**（原因见第 1 节），所有行数、表数、列数、warning 数以 Phase 4 的 inventory 命令产出为准。
+>
+> **⚠️ 合并/部署顺序约束（merge-ordering constraint，非实测结论）**：本分支为 **PostgreSQL-only**。Task 5–7（方言替换 + GORM 类型 tag 归一，见 9.1 节）已使旧 `apps/*` 代码与 MySQL **运行时不兼容**：SQL 层引入 PG-only 写法（`?::text = ANY(string_to_array(...))`、`~*`），GORM tag 引入 `timestamptz` 等 PG 类型（MySQL AutoMigrate 建表直接失败）。因此本分支**不可部署到 MySQL 环境**，只允许合入不部署的集成分支 `monolith-v2`（`cutover-runbook.md` §1.2）；**在 Phase 1 的 PG 运行时接入（pgdrv，`pg-driver-spike.md`）与 cutover 完成之前，不得合入 `main`、不得部署**。
 
 ## 1. 盘点范围
 
@@ -23,18 +25,20 @@
 ### 1.3 Phase 4 生成 inventory 的精确命令
 
 ```bash
-# 构建二进制（AGENTS.md 口径：make local APP=<name>，产出 bundles/corekg）
-make local APP=corekg
+# 构建二进制：migrate 子命令在新单体 cmd/corekg 上，用 make corekg 构建（产出 bundles/corekg）。
+# ⚠️ 警告：make local APP=corekg 是 legacy 目标——构建的是旧 apps/corekg 聚合单体（没有 migrate
+# 命令），且写入同一路径 bundles/corekg，不得使用。
+make corekg
 
 # 生成 inventory（只读 information_schema，不写任何数据；planner 现状为 dry-run，
 # --apply 在 phase 0 被显式拒绝：cmd/corekg/migrate.go:44-46 "apply is not implemented in phase 0"）
-corekg migrate from-mysql \
+./bundles/corekg migrate from-mysql \
   --dsn "$CORekG_MYSQL_DSN" \
   --schemas core,account,knownow,chat,sale \
   --out docs/architecture/phase0/mysql-inventory.json
 
 # 可选：用精确 COUNT(*) 替代 information_schema 估算行数（大库更慢但准确）
-corekg migrate from-mysql --dsn "$CORekG_MYSQL_DSN" --exact-count \
+./bundles/corekg migrate from-mysql --dsn "$CORekG_MYSQL_DSN" --exact-count \
   --schemas core,account,knownow,chat,sale \
   --out docs/architecture/phase0/mysql-inventory.json
 ```
@@ -70,7 +74,7 @@ jq -r '.schemas[].tables[] | .name as $t | .warnings[]? | "\($t): \(.)"' \
 |---|---|---|
 | Coze 工作流库 | `apps/workflow`、`scripts/mysqlcoze/`、`dbutil.Coze()` | 与 `apps/workflow` 一致排除（ratchet 的 `typeTagSkipDirs` 已排除 `workflow`，`internal/arch/pgdialect_test.go:21`）；`dbutil.Coze()` 被 `apps/kechat/models/chat/coze_model_instance.go:27` 等使用，是否随系统库迁移需要在 Phase 4 dry-run 验证（查询 `SHOW DATABASES` 与 `dbutil` 名称清单比对，确认 coze 库是否有系统 model 依赖） |
 | 外部租户 MySQL 数据源 | `pkgs/plugins/dbplugins/mysqlplugin/` | **必须保留**，不属于系统库迁移（见 9.2 节） |
-| 其他命名库 | `dbutil` 中的 `aigc/zhy/cook/oa/llm/cluster/dryang/aiagents/opo/apigateway`（`pkgs/utils/dbutil/mysql.go:17-65`） | 逐一确认是否承载系统 model；grep 显示系统 model 主要走 `Core/Account/Knownow/Chat/Sale` 五个句柄，其余句柄的引用集中在 kechat 的 Coze 模型路径，需要在 Phase 4 dry-run 验证（具体查询：对每个库跑 planner 的 `--schemas`，非空即有表） |
+| 其他命名库 | `dbutil` 中的 `aigc/zhy/cook/oa/llm/cluster/dryang/aiagents/opo/opo_temp/apigateway`（`pkgs/utils/dbutil/mysql.go:17-65`） | 逐一确认是否承载系统 model；grep 显示系统 model 主要走 `Core/Account/Knownow/Chat/Sale` 五个句柄，其余句柄的引用集中在 kechat 的 Coze 模型路径，需要在 Phase 4 dry-run 验证（具体查询：对每个库跑 planner 的 `--schemas`，非空即有表） |
 
 ## 2. 表/行数/大小
 
@@ -179,11 +183,11 @@ ORDER BY 1, 2;
 2. **ETL 按原值搬运 id**（不做 id 重映射），载完后**每表重置 sequence**，否则新写入报主键冲突。基础步骤（只按表内最大 id，不含 AUTO_INCREMENT 对齐）逐表执行（schema 限定，必需）：
 
 ```sql
--- 以 core.ke_forest 为例（表名常量见 apps/kecore/models/foresttype/db.go:17）
-SELECT setval(pg_get_serial_sequence('core.ke_forest', 'id'),
+-- 以 knownow.ke_forest 为例（表名常量见 apps/kecore/models/foresttype/db.go:17）
+SELECT setval(pg_get_serial_sequence('knownow.ke_forest', 'id'),
               COALESCE(MAX(id), 1),
               MAX(id) IS NOT NULL)
-FROM core.ke_forest;
+FROM knownow.ke_forest;
 ```
 
    - `pg_get_serial_sequence` 对 serial 与 identity 列都有效；表名参数必须 schema 限定（单库多 schema 形态下不带 schema 会按 search_path 解析，可能命中错误表）；含大写/关键字的标识符用 `'"core"."KeTable"'` 形式。
@@ -195,20 +199,20 @@ FROM core.ke_forest;
 
 ```sql
 -- (a) 非空表：推进到 MAX(id) 与 auto_increment-1 的较大者（守卫条件已保证结果 > 0）
-SELECT setval(pg_get_serial_sequence('core.ke_forest', 'id'),
+SELECT setval(pg_get_serial_sequence('knownow.ke_forest', 'id'),
               GREATEST(MAX(id), <mysql_auto_increment> - 1),
               true)
-FROM core.ke_forest;
+FROM knownow.ke_forest;
 
 -- (b) 空表：没有 MAX(id) 可用，直接把 auto_increment 作为"下一个待用值"
 --     GREATEST(...,1) 防止 auto_increment 为 0/NULL 时以 0 调用 setval
-SELECT setval(pg_get_serial_sequence('core.ke_forest', 'id'),
+SELECT setval(pg_get_serial_sequence('knownow.ke_forest', 'id'),
               GREATEST(<mysql_auto_increment>, 1),
               false);
 ```
 
-   - (a)/(b) 的选择由守卫查询决定：`SELECT COUNT(*) FROM core.ke_forest;` 为 0 走 (b)，否则走 (a)。ETL 工具应把"守卫条件 + (a)/(b) 分支"实现为代码路径，不手工挑选。
-4. PG ≥ 10 的 identity 列等价替代：`ALTER TABLE core.ke_forest ALTER COLUMN id RESTART WITH <n>;`（仅 identity 列适用；`<n>` 同样受 0 值约束，与 `setval` 二选一，以 4.2.1 的 dry-run 结果决定）。
+   - (a)/(b) 的选择由守卫查询决定：`SELECT COUNT(*) FROM knownow.ke_forest;` 为 0 走 (b)，否则走 (a)。ETL 工具应把"守卫条件 + (a)/(b) 分支"实现为代码路径，不手工挑选。
+4. PG ≥ 10 的 identity 列等价替代：`ALTER TABLE knownow.ke_forest ALTER COLUMN id RESTART WITH <n>;`（仅 identity 列适用；`<n>` 同样受 0 值约束，与 `setval` 二选一，以 4.2.1 的 dry-run 结果决定）。
 
 ### 4.3 CURRENT_TIMESTAMP 默认值（保留）
 
@@ -221,7 +225,7 @@ Task 7 改写**保留**了 `default:CURRENT_TIMESTAMP(3)`（唯一带毫秒的�
 
 ```sql
 -- 应用跑一轮更新后，比对 updated_at 是否前进
-SELECT id, updated_at FROM core.ke_forest WHERE id = <id>;
+SELECT id, updated_at FROM knownow.ke_forest WHERE id = <id>;
 ```
 
 不前进的原生 SQL 站点清单需要在 Phase 4 dry-run 验证（grep 口径：`grep -rn "UPDATE " --include="*.go" apps pkgs | grep -v workflow`，逐个核对是否走 ORM）。
@@ -241,7 +245,7 @@ ORDER BY table_schema, table_name, index_name, seq_in_index;
 
 -- 或逐表 DDL（注意：SHOW CREATE TABLE 在仓库内是外部数据源专用方言，见 9.2 节；
 -- 这里仅作为 DBA 盘点手段，不进代码）
-SHOW CREATE TABLE core.ke_forest;
+SHOW CREATE TABLE knownow.ke_forest;
 ```
 
 ### 5.2 索引类别对照与处理
@@ -343,18 +347,18 @@ WHERE tc.constraint_type = 'FOREIGN KEY'
 ```sql
 -- MySQL：大小写折叠后重复的"唯一列"（迁移到 PG 后 ci 唯一性消失，可再插入重复值）
 SELECT company_id, LOWER(name), COUNT(*) AS cnt
-FROM core.ke_forest GROUP BY company_id, LOWER(name) HAVING COUNT(*) > 1;
+FROM knownow.ke_forest GROUP BY company_id, LOWER(name) HAVING COUNT(*) > 1;
 -- （前提：该列上确实存在 ci 排序规则下的唯一索引——是否如此以 5.1 节的 statistics 盘点为准。
 --  若存在这类唯一索引，MySQL 侧此查询应为空，PG 侧同查询非空即说明迁入数据被折叠出重复；
 --  若该列没有唯一索引，MySQL 侧也可能非空，此时两侧结果应逐组相等，而不是都为空。）
 
 -- PG：载数后同样查询，与 MySQL 侧结果 diff（有 ci 唯一索引时 diff 应为空）
 SELECT company_id, lower(name), COUNT(*) AS cnt
-FROM core.ke_forest GROUP BY company_id, lower(name) HAVING COUNT(*) > 1;
+FROM knownow.ke_forest GROUP BY company_id, lower(name) HAVING COUNT(*) > 1;
 
 -- MySQL：值中含大写字母的行数 = 依赖 ci 检索的规模（评估召回变化面）
 -- 注意必须强制二进制比较：在 ci 排序规则下 name <> LOWER(name) 恒为假（比较本身不区分大小写）
-SELECT COUNT(*) FROM core.ke_forest WHERE name <> LOWER(name) COLLATE utf8mb4_bin;
+SELECT COUNT(*) FROM knownow.ke_forest WHERE name <> LOWER(name) COLLATE utf8mb4_bin;
 ```
 
 ES 召回不受 PG collation 影响（ES 用自己的 `ik_max_word` 分词器），但 DB 直查路径（如 `globalsearch` 走 `~*`）需要做迁移前后召回对比（第 11.5 节）。
@@ -367,7 +371,13 @@ ES 召回不受 PG collation 影响（ES 用自己的 `ik_max_word` 分词器）
 |---|---|---|---|---|
 | MySQL `json` 列 | inventory 中 `mysql_type = json` 的列 | `json` | **`jsonb`**（`internal/migrate/plan.go:72-73`） | ETL 直拷；见 7.2 规范化 |
 | GORM `serializer:json` + `type:text` | `apps/kecore/models/foresttype/forestqa.go:79-80`（`query_reference_list`/`chat_reference_list`）、`forest_db.go:15`（`db_meta`）、`forest.go:194`（`file_config`）、`ke_package.go:65`（`extra`） | `text` | **`text`**（保持） | **保持 `serializer:json` + `text`，不改 jsonb**：序列化由 GORM 完成，值以字符串形态存储，不受 jsonb 规范化影响 |
-| GORM `type:json` tag（4 处） | `apps/keapp/models/web/resource.go:23,29`（`manifest`/`metadata`，Go 类型 `json.RawMessage`）、`apps/keapp/models/apptype/application.go:24,26`（`config`/`crawl_config`） | `json` | **当前 AutoMigrate 会建成 PG `json`**，与 planner 的 `jsonb` **不一致** | Phase 4 必须对齐：把 4 处 tag 改为 `type:jsonb`（推荐，语义与 planner 一致），或把 `MapType("json")` 改回 `json`（不推荐，丢失 jsonb 索引能力）。对齐后在 PG `information_schema.columns` 复查 `data_type` |
+| GORM `type:json` tag（7 处，复核命令见下） | `apps/keapp/models/web/resource.go:23,29`（`manifest`/`metadata`，Go 类型 `json.RawMessage`）、`apps/keapp/models/apptype/application.go:24,26`（`config`/`crawl_config`）、`apps/account/models/accounttype/company.go:58`（`quota`，Go 类型 `*ResourceQuota`）、`apps/kechat/models/chattype/chat_session.go:78`（`input`，Go 类型 `InputList`）、`apps/kechat/models/chattype/model_instance.go:20`（`extra`，Go 类型 `datatypes.JSON`；该 model 为 `CozeModelInstance`，属 `route-decisions.md` "Delete with Coze" 的**删除绑定项**） | `json` | **当前 AutoMigrate 会建成 PG `json`**，与 planner 的 `jsonb` **不一致** | Phase 4 必须对齐 **7 处**：把 tag 改为 `type:jsonb`（推荐，语义与 planner 一致），或把 `MapType("json")` 改回 `json`（不推荐，丢失 jsonb 索引能力）。**不得把任何一处静默留作 `type:json`**；其中 `model_instance.go:20` 是删除绑定项——Coze 删除决策落地则随文件一并删除，文件保留则同样必须对齐，两种结局都要显式记录。对齐后在 PG `information_schema.columns` 复查 `data_type` |
+
+7 处的复核命令（本次修订实际执行，输出恰为上述 7 行）：
+
+```bash
+grep -R "type:json" apps --include='*.go'
+```
 
 ### 7.2 JSON 规范化与校验差异
 
@@ -497,22 +507,22 @@ FROM <schema>.<table>;
 
 ## 11. 校验方案
 
-校验在 ETL 完成后、切换流量前执行，全部通过才允许 cutover。以下 SQL 中以 `core.ke_forest` 为例（表名常量 `TableNameKnownowForest`，`apps/kecore/models/foresttype/db.go:17`），实际对 1.4 节 inventory 的每张表执行。
+校验在 ETL 完成后、切换流量前执行，全部通过才允许 cutover。以下 SQL 中以 `knownow.ke_forest` 为例（表名常量 `TableNameKnownowForest`，`apps/kecore/models/foresttype/db.go:17`），实际对 1.4 节 inventory 的每张表执行。
 
 ### 11.1 行数与主键 min/max（每表，硬门槛）
 
 ```sql
 -- MySQL
-SELECT COUNT(*), COALESCE(MIN(id), 0), COALESCE(MAX(id), 0) FROM core.ke_forest;
+SELECT COUNT(*), COALESCE(MIN(id), 0), COALESCE(MAX(id), 0) FROM knownow.ke_forest;
 -- PG（schema 限定）
-SELECT COUNT(*), COALESCE(MIN(id), 0), COALESCE(MAX(id), 0) FROM core.ke_forest;
+SELECT COUNT(*), COALESCE(MIN(id), 0), COALESCE(MAX(id), 0) FROM knownow.ke_forest;
 ```
 
 **验收阈值：三项必须完全相等（差异 = 0）。** 不满足即 fail，进入 11.3 的差异定位。
 
 ### 11.2 关键字段 checksum（每表，硬门槛）
 
-两侧用同一摘要做聚合 XOR，行序无关。**摘要宽度固定为 MD5 前 8 个 hex 字符（= 32 bit）**：MySQL 侧 `CAST(... AS UNSIGNED)` 配合 `BIT_XOR` 得到无符号值，PG 侧 `bit(32)::bigint` 得到有符号 bigint 内的正数，两侧取值域都是 `0..2^32-1`，异或结果同样落在该区间，**必然可直接比较**。若取 16 个 hex 字符再 `::bit(32)` 会发生静默截断（bit 串长度超出 `bit(32)` 声明宽度），得到与 MySQL `CONV(...,16,10)` 不同的数值；若两侧都按 64 bit 处理，则 MySQL 无符号与 PG 有符号在高位（≥ 2^63）会符号错位。因此本仓库校验统一用 8 hex / 32 bit。
+两侧用同一摘要做聚合 XOR，行序无关。**摘要宽度固定为 MD5 前 8 个 hex 字符（= 32 bit）**：MySQL 侧 `CAST(... AS UNSIGNED)` 配合 `BIT_XOR` 得到无符号值，取值域 `0..2^32-1`；PG 侧 `bit(32)::bigint` 是**有符号**转换——摘要 ≥ `0x80000000`（最高位为 1）时按位模式**符号扩展为负 bigint**，与 MySQL 侧同一无符号摘要的数值不同，不加掩码直接比较必然出错。因此 PG 侧必须对 cast 结果加 `& 4294967295`（= `& 0xFFFFFFFF`）掩码，把符号扩展的值恢复为无符号 `0..2^32-1`，之后两侧异或结果落在同一区间，**可直接比较**。若取 16 个 hex 字符再 `::bit(32)` 会发生静默截断（bit 串长度超出 `bit(32)` 声明宽度），得到与 MySQL `CONV(...,16,10)` 不同的数值；若两侧都按 64 bit 处理，则 MySQL 无符号与 PG 有符号在高位（≥ 2^63）会符号错位。因此本仓库校验统一用 8 hex / 32 bit + PG 侧掩码。
 
 ```sql
 -- MySQL
@@ -522,19 +532,20 @@ SELECT BIT_XOR(CAST(CONV(SUBSTR(MD5(CONCAT_WS('|',
   COALESCE(DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s.%f'), ''),
   COALESCE(DATE_FORMAT(deleted_at, '%Y-%m-%d %H:%i:%s.%f'), '')
   /* …关键字段按表扩展；JSON 列除外，见 7.2 */), 1, 8), 16, 10) AS UNSIGNED))
-FROM core.ke_forest;
+FROM knownow.ke_forest;
 
--- PG（≥ 14，bit_xor 聚合需 14+）
-SELECT bit_xor(('x' || substr(md5(concat_ws('|',
+-- PG（≥ 14，bit_xor 聚合需 14+；& 4294967295 掩码把符号扩展的 cast 结果恢复为无符号 0..2^32-1）
+SELECT bit_xor((('x' || substr(md5(concat_ws('|',
   COALESCE(id::text, ''), COALESCE(company_id::text, ''), COALESCE(uin::text, ''), COALESCE(name, ''),
   COALESCE(to_char(created_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD HH24:MI:SS.US'), ''),
   COALESCE(to_char(updated_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD HH24:MI:SS.US'), ''),
   COALESCE(to_char(deleted_at   AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD HH24:MI:SS.US'), '')
-  )), 1, 8))::bit(32)::bigint)
-FROM core.ke_forest;
+  )), 1, 8))::bit(32)::bigint & 4294967295))
+FROM knownow.ke_forest;
 ```
 
 要点：
+- **PG 侧 `& 4294967295` 掩码不可省略**：`bit(32)::bigint` 会把 ≥ `0x80000000` 的摘要符号扩展为负 bigint，省略掩码时 PG 与 MySQL 的 XOR 数值可能不同，产生假阳性（见本节开头的口径说明；11.3 的分桶查询同样必须带掩码）；
 - **每个参与哈希的列都包一层 `COALESCE(...,'')`**：两侧 `CONCAT_WS` 都是**跳过** NULL 参数而不是产出空位，NULL 与非 NULL 混合时字段边界发生位移（`(NULL,'a')` 与 `('a',NULL)` 都得到 `'a'`），不同行会哈希出相同串；PG 侧 `concat_ws` 还要求参数为文本，数值列需显式 `::text`（MySQL 侧自动转换，不必加）；
 - 时间列（含 `deleted_at`）两侧统一渲染到同一时区、同一格式（8.4 节）。`deleted_at` **不得**写成 `deleted_at::text`——该写法走会话 `TimeZone` 输出、格式也与 MySQL `DATE_FORMAT` 不一致；
 - SQL 里的 `'Asia/Shanghai'` 是 8.4 节的**待实测假设**，Phase 4 用实测时区整体替换后再执行；
@@ -547,12 +558,12 @@ FROM core.ke_forest;
 -- MySQL：按 id 分桶（每 10 万 id 一桶）算局部 checksum
 SELECT (id DIV 100000) AS bucket, COUNT(*),
        BIT_XOR(CAST(CONV(SUBSTR(MD5(CONCAT_WS('|', /* 同 11.2 字段与 COALESCE 口径 */)), 1, 8), 16, 10) AS UNSIGNED))
-FROM core.ke_forest GROUP BY bucket ORDER BY bucket;
+FROM knownow.ke_forest GROUP BY bucket ORDER BY bucket;
 
--- PG：整数除法已按整除语义，桶宽必须与 MySQL 完全一致
+-- PG：整数除法已按整除语义，桶宽必须与 MySQL 完全一致；& 4294967295 掩码口径同 11.2
 SELECT (id / 100000) AS bucket, COUNT(*),
-       bit_xor(('x' || substr(md5(concat_ws('|', /* 同 11.2 字段与 COALESCE 口径 */)), 1, 8))::bit(32)::bigint)
-FROM core.ke_forest GROUP BY bucket ORDER BY bucket;
+       bit_xor((('x' || substr(md5(concat_ws('|', /* 同 11.2 字段与 COALESCE 口径 */)), 1, 8))::bit(32)::bigint & 4294967295))
+FROM knownow.ke_forest GROUP BY bucket ORDER BY bucket;
 ```
 
 分桶口径：**两侧必须是同一表达式、同一桶宽**，否则桶号无法对齐。MySQL 的 `id / 100000` 返回小数（DECIMAL），不能当桶号；必须用 `id DIV 100000`（或 `FLOOR(id / 100000)`）。PG 侧 `id / 100000` 在 `id` 为整数时已是整除，保持原样。两侧输出 `diff`，对不一致桶内的 id 逐行比对（11.4 抽样口径同样适用于桶内）。
@@ -565,7 +576,7 @@ FROM core.ke_forest GROUP BY bucket ORDER BY bucket;
 
 ```sql
 -- 两侧执行（模数 97 为示例，Phase 4 按行数取 1%/5% 定档）
-SELECT * FROM core.ke_forest WHERE id % 97 = 0 ORDER BY id;
+SELECT * FROM knownow.ke_forest WHERE id % 97 = 0 ORDER BY id;
 ```
 
 导出两侧结果为 JSON（Go 工具统一序列化：时间按 8.4 节渲染、jsonb 解析后重序列化、bytea 十六进制），逐行 `diff`。**验收阈值：抽样行零差异**（差异即 fail，处理同 11.3）。

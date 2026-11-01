@@ -94,9 +94,15 @@ $ BASE_URL=http://127.0.0.1:18080 scripts/golden-path.sh --health-only
 
 ## 后续执行完整基线的步骤
 
+> **⚠️ 完整基线必须跑在 Task 5 之前的代码上，不是分支 HEAD。** 针对旧 `apps/corekg` 聚合单体的完整 11-stage 基线，必须从 **Task 5 之前的 commit `630ba7b9f`**（或当前生产在跑的部署镜像）checkout 后执行：本分支 HEAD 上 Task 5–7 已把旧 `apps/*` 改为 **PostgreSQL-only**（`?::text = ANY(...)`、`~*` 等 PG 方言 SQL 与 `timestamptz` 等 GORM 类型 tag），在 MySQL 上 AutoMigrate 建表与 stage 8（`kesearch.ForestSearch`）等经过全局搜索改写站点的路径**无法通过**，HEAD 代码不构成有效的旧栈基线。当前唯一记录的实测结果是对新骨架 `cmd/corekg` 的 stage 1（见上节 Environment status）；**本文档不声称存在完整基线，后续也不得把 HEAD 上的任何"旧栈"运行结果当作基线回填**。以下步骤中的 `make dev-up` 等旧栈命令一律在 `630ba7b9f` 的独立 worktree 中执行。
+
 在有 docker 与足够磁盘的机器上：
 
 ```bash
+# 0) 在 Task 5 之前的 commit 上建独立 worktree（基线代码 = 630ba7b9f，见上方警告）
+git worktree add /tmp/corekg-pre-task5 630ba7b9f
+cd /tmp/corekg-pre-task5
+
 # 1) 启动中间件 + 宿主旧 apps/corekg + 宿主 worker（首次需按 README 完成 keinit 初始化）
 make dev-up                       # 转交 scripts/dev-up.sh；等价 ./scripts/dev-up.sh up
 make dev-status                   # 确认 corekg:8080 与中间件端口就绪
@@ -108,10 +114,12 @@ export TEST_DOMAIN=''             # 如账号属于某域则填写
 export MODEL_ID='<numeric-model-id>'
 export KEAPI_API_KEY='<keapi-api-key>'
 
-# 3) 跑完整 11 stage 并留存输出
-BASE_URL=http://127.0.0.1:8080 scripts/golden-path.sh 2>&1 | tee /tmp/golden-path-baseline.log
+# 3) 跑完整 11 stage 并留存输出。注意：scripts/golden-path.sh 是 Task 9（ead6d307c）加入的，
+#    630ba7b9f worktree 里没有该脚本——脚本只是 HTTP 回归 harness，不改变被测旧栈的基线语义，
+#    从分支 HEAD 的 checkout 取该脚本执行即可（BASE_URL 指向本 worktree dev-up 的旧栈）：
+BASE_URL=http://127.0.0.1:8080 <HEAD_CHECKOUT>/scripts/golden-path.sh 2>&1 | tee /tmp/golden-path-baseline.log
 
-# 4) 只验证新骨架 stage 1（可选）
+# 4) 只验证新骨架 stage 1（可选；cmd/corekg 在 630ba7b9f 不存在，本步在分支 HEAD 的 checkout 执行）
 go build -o bundles/corekg ./cmd/corekg
 ./bundles/corekg server --addr 127.0.0.1:18080 &
 BASE_URL=http://127.0.0.1:18080 scripts/golden-path.sh --health-only

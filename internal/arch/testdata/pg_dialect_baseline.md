@@ -9,6 +9,8 @@ MySQL-only SQL 模式与 GORM 类型 tag 的数量。后续 PG 迁移工作只�
 
 ## 基线
 
+> **本表是 Phase 0 开始时的历史基线；当前 ratchet 常量已降至 0/0/0（`FIND_IN_SET`/`REGEXP`/类型 tag 全部完成，见 `internal/arch/pgdialect_test.go:16-18` 的 `baselineFindInSet = 0`、`baselineRegexp = 0`、`baselineMySQLTypTag = 0`）。不要按 3/2/218 预期当前测试失败；新增代码仍不得超过当前 0。**
+
 | 模式 | 基线 | 计数方式 | 范围 |
 |---|---:|---|---|
 | `FIND_IN_SET\(` | 3 | 含匹配的代码行数 | `apps/kecore/models/forest`、`apps/kesearch/models/globalsearch` |

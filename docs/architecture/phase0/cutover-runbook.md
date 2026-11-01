@@ -21,6 +21,7 @@
 
 - Phase 0–4 是**内部里程碑**，不对外发布中间版本。对外只有一个新版本：`<NEW_IMAGE_NAME>:<NEW_IMAGE_TAG>`（含 Phase 0–4 全部改动）。
 - **镜像管线现状（易错点）**：legacy 目标 `make local/linux/push-image APP=corekg` 构建的是**旧** `apps/corekg` 聚合单体（`apps/corekg/script/Dockerfile`，`IMAGE_NAME = docker.io/corekg/<APP>-api`）；**新**单体 `cmd/corekg` 目前只有 `make corekg` 本地二进制目标（产出 `bundles/corekg`），**没有 Dockerfile，也没有 CI 镜像管线**——`<NEW_IMAGE_NAME>:<NEW_IMAGE_TAG>` 是 Phase 4 交付（§2 第 2 项 ⛔）。部署一律引用 `<NEW_IMAGE_TAG>`，不得把本地 `bundles/corekg` 当作部署产物。
+- **⚠️ Phase 0 代码分支合并顺序（merge-ordering constraint，非实测结果）**：`phase0-foundation` 分支为 **PostgreSQL-only**——Task 5–7 已使旧 `apps/*` 与 MySQL **运行时不兼容**（`?::text = ANY(...)`、`~*` 等 PG 方言 SQL；`timestamptz` 等 GORM 类型 tag 在 MySQL AutoMigrate 建表直接失败），**不可部署到 MySQL 环境**。该分支只允许合入本节的不部署集成分支 `monolith-v2`；**在 Phase 1 的 PG 运行时接入（pgdrv，`pg-driver-spike.md`）与本 runbook 的切换完成之前，不得合入 `main`、不得以任何形式部署**。此约束与上一条"新镜像管线是 Phase 4 交付"并行不悖：前者约束代码分支流向，后者约束部署产物来源。
 - 分支策略：
   - 日常开发在集成分支 **`monolith-v2`**；
   - **T-1 起 `main` 冻结合并**：不接受功能合并，仅接受 cutover 阻塞修复（需 Go/No-Go 会议批准，且同步 cherry-pick 到 `monolith-v2`）；
@@ -70,7 +71,7 @@ MySQL 在切换签收前始终是权威库（评估文档 §12.2）：ETL/校验
 
 | # | 检查项 | owner | 完成标准 | 现状（2026-11-01） |
 |---|---|---|---|---|
-| 5 | Task 9 golden-path 11/11 | 应用 | 在 Docker 可用宿主机对旧栈完整跑通 11 stage 并回填基线（`golden-path-baseline.md` 的回填清单）；种子账号/模型/`KEAPI_API_KEY` 就绪 | ⛔ **未执行**：当前环境无 docker（宿主根分区 99% 用满）、无种子数据，仅 stage 1 实测通过。详见 `golden-path-baseline.md` §"Environment status" |
+| 5 | Task 9 golden-path 11/11 | 应用 | 在 Docker 可用宿主机对旧栈完整跑通 11 stage 并回填基线（`golden-path-baseline.md` 的回填清单）；种子账号/模型/`KEAPI_API_KEY` 就绪。**基线代码必须是 Task 5 之前的 commit `630ba7b9f`（或当前生产在跑的镜像），不是分支 HEAD**——HEAD 的 Task 5–7 已把旧 `apps/*` 改为 PG-only（MySQL 上 AutoMigrate 与 stage 8/全局搜索路径直接失败），在 HEAD 上跑出的"旧栈基线"无效（见 `golden-path-baseline.md` §"后续执行完整基线的步骤"） | ⛔ **未执行**：当前环境无 docker（宿主根分区 99% 用满）、无种子数据，仅 stage 1 实测通过。详见 `golden-path-baseline.md` §"Environment status" |
 | 6 | Task 11 live inventory | DBA | `docs/architecture/phase0/mysql-inventory.json` 已用 `corekg migrate from-mysql`（只读）生成、脱敏、提交 | ⛔ **缺失**：Task 11 为 DONE_WITH_BLOCKER（无可达 MySQL），文件不存在 |
 | 7 | Task 12 评估文档 | DBA | `pg-migration-assessment.md` 已提交；其 §11 校验口径并入本文 §5、§12 回滚原则并入本文 §6；DBA 实际 review 归第 25 项 | ✅ 文档已提交（Task 12）；其数值列全部留待 Phase 4 inventory（诚实标注，未伪造） |
 | 8 | ETL `--apply` 与 ES 重建命令 | 应用 | `corekg migrate from-mysql --apply` 实现（批量 COPY、checkpoint、setval 钩子、校验内嵌，评估文档 §10.2）；`<ES_REBUILD_CMD>` 按 §4.3 行为规格交付 | ⛔ **两者均未实现**：`--apply` 在 Phase 0 显式拒绝（`cmd/corekg/migrate.go` 报 "apply is not implemented in phase 0"，当前只有只读 dry-run）；ES 重建命令不存在（§4.3 为行为规格占位） |
@@ -471,7 +472,7 @@ curl -sS <COREKG_BASE_URL>/v3/keapi.Search \
 
 - **会议**：T0 前 `<GO_NOGO_TIME>`（默认 T-1 21:00），§8.1 四方 owner 到场（可远程）。
 - **GO 条件（同时满足，缺一不可）**：
-  1. §2 清单无 ⛔，⬜ 项仅剩"窗口内才能执行"的动作（T-1/T0 项）；
+  1. §2 清单无 ⛔，⬜ 项仅剩"窗口内才能执行"的动作（T-1/T0 项）。**基线口径**：第 5 项的 golden-path 11/11 旧栈基线必须在 Task 5 之前的 commit `630ba7b9f`（或生产镜像）上采集——本分支 HEAD 已把旧 `apps/*` 改为 PG-only，在 HEAD 上跑出的结果不构成旧栈基线；据此口径不满足时同样判 NO-GO；
   2. Phase 4 演练记录：G1–G5 在演练环境全绿（含 `<ES_REBUILD_CMD>` 已按 §4.3 规格交付并在演练环境跑通）且记录在 `<ARTIFACT_DIR>`；
   3. 回滚演练完成（§2 第 9 项，评估文档 §12.4 要求）；
   4. 业务确认维护窗口已公告、数据丢失边界（§7）已说明。
@@ -625,7 +626,7 @@ PGPASSWORD="$PG_ADMIN_PASSWORD" psql "<PG_ADMIN_DSN>" \
 ### 7.4 回滚前置条件（顺序不可换）
 
 1. 冻结 PG 写入（§6.3 步骤 1，先止损失边界）；
-2. 向产品 owner 呈现实际丢失面：按 §7.2 表 + PG 真实写入量统计，例如逐关键表 `SELECT COUNT(*) FROM core.ke_forest WHERE created_at > '<T0_TS>';`。**`core.ke_forest` 只是示意表**——inventory 当前缺失（§2 第 6 项 ⛔），实际表清单以 Phase 4 inventory 产出为准；
+2. 向产品 owner 呈现实际丢失面：按 §7.2 表 + PG 真实写入量统计，例如逐关键表 `SELECT COUNT(*) FROM knownow.ke_forest WHERE created_at > '<T0_TS>';`。**`knownow.ke_forest` 只是示意表**——inventory 当前缺失（§2 第 6 项 ⛔），实际表清单以 Phase 4 inventory 产出为准；
 3. 产品 owner 在 §8.4 签收表签字，三选一：**接受丢失** / **要求尝试人工合入**（拉长 RTO，§7.5）/ **拒绝回滚改为前向修复**；
 4. 之后才执行 §6.3 步骤 3（恢复 MySQL 写）及其后步骤。
 
