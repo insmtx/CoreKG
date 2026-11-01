@@ -176,7 +176,7 @@ WHERE table_schema IN ('core','account','knownow','chat','sale') AND column_name
 ORDER BY 1, 2;
 ```
 
-2. **ETL 按原值搬运 id**（不做 id 重映射），载完后**每表重置 sequence**，否则新写入报主键冲突。逐表执行（schema 限定，必需）：
+2. **ETL 按原值搬运 id**（不做 id 重映射），载完后**每表重置 sequence**，否则新写入报主键冲突。基础步骤（只按表内最大 id，不含 AUTO_INCREMENT 对齐）逐表执行（schema 限定，必需）：
 
 ```sql
 -- 以 core.ke_forest 为例（表名常量见 apps/kecore/models/foresttype/db.go:17）
@@ -187,16 +187,28 @@ FROM core.ke_forest;
 ```
 
    - `pg_get_serial_sequence` 对 serial 与 identity 列都有效；表名参数必须 schema 限定（单库多 schema 形态下不带 schema 会按 search_path 解析，可能命中错误表）；含大写/关键字的标识符用 `'"core"."KeTable"'` 形式。
-   - 空表时 `MAX(id) IS NULL` → `setval(seq, 1, false)`，下一次插入取 1。
-3. **对齐 MySQL 的 AUTO_INCREMENT 计数器**：MySQL 删行后计数器可能已超过 `MAX(id)`，只按 MAX 重置会产生重复 id。ETL 前记录 MySQL 侧 `information_schema.tables.auto_increment`（2.1 节 SQL 已含该列），重置值取两者较大者：
+   - 第三参数 `is_called`：非空表 `MAX(id) IS NOT NULL` → `true`，下一次插入取 `MAX(id)+1`；空表 → `setval(seq, 1, false)`，`false` 表示该值尚未被用过，下一次插入取 1（用 `true` 会跳过 1 直接从 2 开始）。
+   - **任何情况下都不得用 0 调用 `setval`**：PG sequence 默认 `MINVALUE 1`，`setval(seq, 0, ...)` 直接报 `setval: value 0 is out of bounds for sequence`。下面所有写法都靠 `COALESCE(..., 1)` / `GREATEST(..., 1)` 兜住这一条。
+3. **对齐 MySQL 的 AUTO_INCREMENT 计数器**：MySQL 删行后计数器可能已超过 `MAX(id)`，只按 MAX 重置会产生重复 id。ETL 前记录 MySQL 侧 `information_schema.tables.auto_increment`（2.1 节 SQL 已含该列；语义是"下一个待用值"，故已用最大值为 `auto_increment - 1`）。
+
+   **守卫条件：仅当 `auto_increment - 1 > MAX(id)` 时才执行本步**；否则步骤 2 的结果已是正确上界，直接跳过（不重复调用 `setval`）。`auto_increment` 为 NULL（表从未插入）时同样跳过。按表是否为空分两种安全写法：
 
 ```sql
+-- (a) 非空表：推进到 MAX(id) 与 auto_increment-1 的较大者（守卫条件已保证结果 > 0）
 SELECT setval(pg_get_serial_sequence('core.ke_forest', 'id'),
-              GREATEST(COALESCE((SELECT MAX(id) FROM core.ke_forest), 0), <mysql_auto_increment> - 1),
-              true);
+              GREATEST(MAX(id), <mysql_auto_increment> - 1),
+              true)
+FROM core.ke_forest;
+
+-- (b) 空表：没有 MAX(id) 可用，直接把 auto_increment 作为"下一个待用值"
+--     GREATEST(...,1) 防止 auto_increment 为 0/NULL 时以 0 调用 setval
+SELECT setval(pg_get_serial_sequence('core.ke_forest', 'id'),
+              GREATEST(<mysql_auto_increment>, 1),
+              false);
 ```
 
-4. PG ≥ 10 的 identity 列等价替代：`ALTER TABLE core.ke_forest ALTER COLUMN id RESTART WITH <n>;`（仅 identity 列适用；与 `setval` 二选一，以 4.2.1 的 dry-run 结果决定）。
+   - (a)/(b) 的选择由守卫查询决定：`SELECT COUNT(*) FROM core.ke_forest;` 为 0 走 (b)，否则走 (a)。ETL 工具应把"守卫条件 + (a)/(b) 分支"实现为代码路径，不手工挑选。
+4. PG ≥ 10 的 identity 列等价替代：`ALTER TABLE core.ke_forest ALTER COLUMN id RESTART WITH <n>;`（仅 identity 列适用；`<n>` 同样受 0 值约束，与 `setval` 二选一，以 4.2.1 的 dry-run 结果决定）。
 
 ### 4.3 CURRENT_TIMESTAMP 默认值（保留）
 
@@ -265,20 +277,22 @@ ORDER BY schemaname, tablename, indexname;
   2. **复合唯一索引**：MySQL 复合唯一中含 NULL 的行不判重；PG 同样按 `NULLS DISTINCT` 处理（任一列为 NULL 即不冲突）。语义一致，但**ETL 时可能撞上历史脏数据**：MySQL 里 `('a', NULL)` 重复行载入 PG 也会被拒吗？——不会（两行都含 NULL，不判重）。真正的风险是**大小写**：MySQL `utf8mb4_*_ci` 下 `'Foo'` 与 `'foo'` 冲突，PG 默认排序规则下不冲突（见第 6 节）；反之 MySQL 里已存在的 `Foo`/`foo` 两行在 ci collation 下不可能共存，所以 PG 侧不会新增冲突，但 ci 下"看似唯一"的列在 PG 变为可重复插入。逐唯一索引确认查询（PG 侧，载数后）：
 
 ```sql
--- 唯一索引涉及的列中哪些可空 + 是否 NULLS NOT DISTINCT
+-- 唯一索引涉及的列中哪些可空 + 是否 NULLS NOT DISTINCT + 完整索引定义
 SELECT n.nspname AS schema, t.relname AS table, i.relname AS index_name,
-       a.attname AS column, a.attnotnull, x.indnullsnotdistinct
+       k.ord AS key_part, k.attnum, a.attname AS column, a.attnotnull,
+       x.indnullsnotdistinct, pg_get_indexdef(x.indexrelid) AS indexdef
 FROM pg_index x
 JOIN pg_class i ON i.oid = x.indexrelid
 JOIN pg_class t ON t.oid = x.indrelid
 JOIN pg_namespace n ON n.oid = t.relnamespace
 CROSS JOIN LATERAL unnest(x.indkey) WITH ORDINALITY AS k(attnum, ord)
-JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
 WHERE n.nspname IN ('core','account','knownow','chat','sale') AND x.indisunique
-ORDER BY 1, 2, 3;
+ORDER BY 1, 2, 3, 4;
 ```
 
-（`indnullsnotdistinct` 仅 PG 15+ 存在，低版本查询需去掉该列。）
+- **表达式索引的键位会被 inner join 丢掉**：`pg_index.indkey` 对表达式键位（如 `lower(name)`、`left(col,10)`）填 `0`，而 `pg_attribute` 里没有 `attnum = 0` 的行，因此上面的 `pg_attribute` 关联**必须用 `LEFT JOIN`**；用 inner join 时这些键位整行消失，审计会误判为"该唯一索引只覆盖普通列"。表达式键位以 `attnum = 0`、`column` 为 NULL 呈现，其判重/可空语义改由 `pg_get_indexdef(indexrelid)` 的完整定义人工判断。
+- `indnullsnotdistinct` 仅 PG 15+ 存在，低版本查询需去掉该列。
 
 ### 5.5 外键（FK）
 
@@ -330,14 +344,17 @@ WHERE tc.constraint_type = 'FOREIGN KEY'
 -- MySQL：大小写折叠后重复的"唯一列"（迁移到 PG 后 ci 唯一性消失，可再插入重复值）
 SELECT company_id, LOWER(name), COUNT(*) AS cnt
 FROM core.ke_forest GROUP BY company_id, LOWER(name) HAVING COUNT(*) > 1;
--- （MySQL ci 唯一索引下此查询必然为空；若 PG 侧同查询非空 = 迁入数据被折叠出重复）
+-- （前提：该列上确实存在 ci 排序规则下的唯一索引——是否如此以 5.1 节的 statistics 盘点为准。
+--  若存在这类唯一索引，MySQL 侧此查询应为空，PG 侧同查询非空即说明迁入数据被折叠出重复；
+--  若该列没有唯一索引，MySQL 侧也可能非空，此时两侧结果应逐组相等，而不是都为空。）
 
--- PG：载数后同样查询，两侧 diff 应为空
+-- PG：载数后同样查询，与 MySQL 侧结果 diff（有 ci 唯一索引时 diff 应为空）
 SELECT company_id, lower(name), COUNT(*) AS cnt
 FROM core.ke_forest GROUP BY company_id, lower(name) HAVING COUNT(*) > 1;
 
--- MySQL：lower(col) 与原值的行数差 = 依赖 ci 检索的行数规模（评估召回变化面）
-SELECT COUNT(*) FROM core.ke_forest WHERE name <> LOWER(name);
+-- MySQL：值中含大写字母的行数 = 依赖 ci 检索的规模（评估召回变化面）
+-- 注意必须强制二进制比较：在 ci 排序规则下 name <> LOWER(name) 恒为假（比较本身不区分大小写）
+SELECT COUNT(*) FROM core.ke_forest WHERE name <> LOWER(name) COLLATE utf8mb4_bin;
 ```
 
 ES 召回不受 PG collation 影响（ES 用自己的 `ik_max_word` 分词器），但 DB 直查路径（如 `globalsearch` 走 `~*`）需要做迁移前后召回对比（第 11.5 节）。
@@ -352,12 +369,13 @@ ES 召回不受 PG collation 影响（ES 用自己的 `ik_max_word` 分词器）
 | GORM `serializer:json` + `type:text` | `apps/kecore/models/foresttype/forestqa.go:79-80`（`query_reference_list`/`chat_reference_list`）、`forest_db.go:15`（`db_meta`）、`forest.go:194`（`file_config`）、`ke_package.go:65`（`extra`） | `text` | **`text`**（保持） | **保持 `serializer:json` + `text`，不改 jsonb**：序列化由 GORM 完成，值以字符串形态存储，不受 jsonb 规范化影响 |
 | GORM `type:json` tag（4 处） | `apps/keapp/models/web/resource.go:23,29`（`manifest`/`metadata`，Go 类型 `json.RawMessage`）、`apps/keapp/models/apptype/application.go:24,26`（`config`/`crawl_config`） | `json` | **当前 AutoMigrate 会建成 PG `json`**，与 planner 的 `jsonb` **不一致** | Phase 4 必须对齐：把 4 处 tag 改为 `type:jsonb`（推荐，语义与 planner 一致），或把 `MapType("json")` 改回 `json`（不推荐，丢失 jsonb 索引能力）。对齐后在 PG `information_schema.columns` 复查 `data_type` |
 
-### 7.2 jsonb 规范化带来的校验差异
+### 7.2 JSON 规范化与校验差异
 
-MySQL `json` 保留原始文本（key 顺序、重复 key、空白），PG `jsonb` **规范化**：key 排序、空白压缩、重复 key 去重（保留最后一个）、数字格式归一（`1.0` → `1.0` 保留但 `1e2` → `100`）。因此：
-
-- **字节级比对必然失败**：第 11 节 checksum 只能对 `json` 列的规范化形态比对。两侧统一的规范化姿势：MySQL 侧 `JSON_UNQUOTE(JSON_EXTRACT(col, '$'))`（仍是原文）不可靠，正确做法是把**两侧都按"解析后重序列化"**比对——PG：`col::text`（jsonb 已规范化）；MySQL：`JSON_COMPACT`?（无此函数，MySQL 8.0 无规范化输出）→ 退而在 Go 工具里 `json.Unmarshal`+`json.Marshal` 后比对（`map[string]any` 两侧同代码，key 顺序由 Go marshal 排序，天然对齐）。**结论：JSON 列的 checksum 放进 Go 校验工具做，不在 SQL 里做。**
-- jsonb 不保留重复 key：MySQL 列里若有重复 key（理论可能），迁移后静默去重——数量影响用 `jsonb_typeof`/key 计数抽检。
+- **前提（易误解处）**：MySQL 原生 `json` 列**不保存原始文本**。服务端在写入时解析并存为优化的二进制格式，key 已排序、无意义空白已去除、重复 key 已折叠（保留最后一个）。所以"MySQL 保留原文、PG jsonb 才规范化"的对比不成立：**两侧都是规范化存储，只是规范化规则不完全相同**（数字字面量的存储与回显、转义与非 ASCII 处理、key 排序的平局规则等存在版本相关差异）。
+- **结论不变：JSON 列不得进入 SQL checksum。** 语义等价的两个值，其 `col` 文本输出在两侧仍可能字节不等，第 11 节的 SQL 摘要会因此产生假阳性。统一做法是在 Go 校验工具中"解析后重序列化"：两侧取值 `json.Unmarshal` 到同一类型（`map[string]any` 或强类型），再用**同一份** `json.Marshal` 代码序列化后比对——同一份 Go 代码保证规范化规则一致。
+  - PG 侧 `col::text` 即 jsonb 规范化文本；MySQL 侧没有与之对齐的规范化输出函数（`JSON_UNQUOTE(JSON_EXTRACT(col, '$'))` 返回的是 MySQL 自己的规范化文本，不保证与 PG 一致），因此不要在 SQL 层强行对齐，直接在 Go 层对齐。
+- **真正保留原文的是 text 列**：7.1 节第二类（`serializer:json` + `type:text`）在 MySQL 侧就是原文存储（含 key 顺序、空白、可能的重复 key），迁到 PG `text` 后仍是原文，**不做任何规范化**。这类列可以按普通 text 列进 checksum 做字节级比对；前提是它们保持 `text`、不被改成 jsonb（7.1 节的 `type:json` 对齐项只针对真 json 列）。
+- **重复 key 的正确表述**：MySQL `json` 列中不可能存在重复 key（写入时已折叠），PG jsonb 同样折叠，因此迁移**不改变**重复 key 数量。jsonb 的 `jsonb_typeof`/key 计数抽检用于发现**类型漂移**（如 MySQL 侧存的是标量/数组、PG 侧被写成对象），不是用于发现重复 key。
 - Go 侧读写：`json.RawMessage` 字段（`resource.go:23`）写入 jsonb 列时 pgx 可直接传 `[]byte`；`serializer:json` 字段是 text 列不受影响。兼容性需要在 Phase 4 dry-run 验证（golden path 跑一遍 resource 的写读）。
 
 ### 7.3 文本族
@@ -418,11 +436,13 @@ FROM <schema>.<table>;
 
 ### 8.4 时区（datetime → timestamptz 的 8 小时风险）
 
-- MySQL `datetime` 是"无时区挂钟时间"，实际值按服务器/会话时区（本部署为 `+08:00`）写入；PG `timestamptz` 存绝对时刻。ETL 解析时**必须显式按源时区打标签**：
-  1. 先确认源时区（Phase 4 执行）：`SELECT @@global.time_zone, @@session.time_zone;`（返回 `SYSTEM` 时再查 `SHOW VARIABLES LIKE 'system_time_zone';`）。
-  2. go-sql-driver 读取侧 DSN 必须 `parseTime=true&loc=Asia%2FShanghai`（loc = 1 的实测时区），得到正确的 `time.Time`；写入 PG 时值即带正确偏移。
+- MySQL `datetime` 是"无时区挂钟时间"，实际值按服务器/会话时区写入；PG `timestamptz` 存绝对时刻。ETL 解析时**必须显式按源时区打标签**。
+- **源时区是待实测项，不是已知事实**：`+08:00`（`Asia/Shanghai`）只是基于部署环境的**假设**，本文后续 SQL 中出现的 `Asia/Shanghai` 一律按此假设书写。假设错了 = 整库时间偏移 8 小时，因此 Phase 4 必须先用下面的查询确认真实时区，再把它填入 ETL 配置与本文 SQL：
+  1. 确认源时区（Phase 4 执行）：`SELECT @@global.time_zone, @@session.time_zone;`（返回 `SYSTEM` 时再查 `SHOW VARIABLES LIKE 'system_time_zone';`，并核对 OS 时区与 `mysql_tzinfo_to_sql` 是否已加载时区表）。
+  2. go-sql-driver 读取侧 DSN 必须 `parseTime=true&loc=<步骤 1 的实测时区，URL 编码>`（假设成立时为 `loc=Asia%2FShanghai`），得到正确的 `time.Time`；写入 PG 时值即带正确偏移。
   3. **禁止**用 `parseTime=true` 不带 `loc`（默认 UTC，会把挂钟时间当 UTC，产生 8 小时偏移）。
-- 校验：抽样行两侧比对（MySQL `DATE_FORMAT(col, '%Y-%m-%d %H:%i:%s.%f')` vs PG `to_char(col AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD HH24:MI:SS.MS')`，见 11.4）。
+  4. PG 侧渲染口径同理：`to_char(col AT TIME ZONE '<实测时区>', ...)`；ETL 与校验（11.2/11.4）必须用同一个时区名，且该名字来自步骤 1 的实测结果。
+- 校验：抽样行两侧比对（MySQL `DATE_FORMAT(col, '%Y-%m-%d %H:%i:%s.%f')` vs PG `to_char(col AT TIME ZONE '<实测时区>', 'YYYY-MM-DD HH24:MI:SS.US')`，见 11.4）。
 
 ## 9. 方言替换清单
 
@@ -488,47 +508,54 @@ SELECT COUNT(*), COALESCE(MIN(id), 0), COALESCE(MAX(id), 0) FROM core.ke_forest;
 SELECT COUNT(*), COALESCE(MIN(id), 0), COALESCE(MAX(id), 0) FROM core.ke_forest;
 ```
 
-**验收阈值：三项必须完全相等（差异 = 0）。** 不满足即 fail，进入 11.4 的差异定位。
+**验收阈值：三项必须完全相等（差异 = 0）。** 不满足即 fail，进入 11.3 的差异定位。
 
 ### 11.2 关键字段 checksum（每表，硬门槛）
 
-两侧用同一摘要（MD5 取前 16 hex → 整数）做聚合 XOR，行序无关：
+两侧用同一摘要做聚合 XOR，行序无关。**摘要宽度固定为 MD5 前 8 个 hex 字符（= 32 bit）**：MySQL 侧 `CAST(... AS UNSIGNED)` 配合 `BIT_XOR` 得到无符号值，PG 侧 `bit(32)::bigint` 得到有符号 bigint 内的正数，两侧取值域都是 `0..2^32-1`，异或结果同样落在该区间，**必然可直接比较**。若取 16 个 hex 字符再 `::bit(32)` 会发生静默截断（bit 串长度超出 `bit(32)` 声明宽度），得到与 MySQL `CONV(...,16,10)` 不同的数值；若两侧都按 64 bit 处理，则 MySQL 无符号与 PG 有符号在高位（≥ 2^63）会符号错位。因此本仓库校验统一用 8 hex / 32 bit。
 
 ```sql
 -- MySQL
 SELECT BIT_XOR(CAST(CONV(SUBSTR(MD5(CONCAT_WS('|',
-  id, company_id, uin, name,
+  COALESCE(id, ''), COALESCE(company_id, ''), COALESCE(uin, ''), COALESCE(name, ''),
   COALESCE(DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s.%f'), ''),
   COALESCE(DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s.%f'), ''),
-  COALESCE(deleted_at, '')
-  /* …关键字段按表扩展；JSON 列除外，见 7.2 */), 1, 16), 16, 10) AS UNSIGNED))
+  COALESCE(DATE_FORMAT(deleted_at, '%Y-%m-%d %H:%i:%s.%f'), '')
+  /* …关键字段按表扩展；JSON 列除外，见 7.2 */), 1, 8), 16, 10) AS UNSIGNED))
 FROM core.ke_forest;
 
 -- PG（≥ 14，bit_xor 聚合需 14+）
 SELECT bit_xor(('x' || substr(md5(concat_ws('|',
-  id, company_id, uin, name,
+  COALESCE(id::text, ''), COALESCE(company_id::text, ''), COALESCE(uin::text, ''), COALESCE(name, ''),
   COALESCE(to_char(created_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD HH24:MI:SS.US'), ''),
   COALESCE(to_char(updated_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD HH24:MI:SS.US'), ''),
-  COALESCE(deleted_at::text, '')
-  )), 1, 16))::bit(32)::bigint)
+  COALESCE(to_char(deleted_at   AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD HH24:MI:SS.US'), '')
+  )), 1, 8))::bit(32)::bigint)
 FROM core.ke_forest;
 ```
 
 要点：
-- 时间列两侧统一渲染到同一时区同一格式（8.4 节）；
-- NULL 统一 `COALESCE` 为空串（两侧口径一致）；
-- **JSON/jsonb 列不进 SQL checksum**（jsonb 规范化导致必然不等，见 7.2），改在 Go 校验工具中"解析后重序列化"比对；
-- **验收阈值：checksum 相等。** 不相等 → 11.4 分桶定位。
+- **每个参与哈希的列都包一层 `COALESCE(...,'')`**：两侧 `CONCAT_WS` 都是**跳过** NULL 参数而不是产出空位，NULL 与非 NULL 混合时字段边界发生位移（`(NULL,'a')` 与 `('a',NULL)` 都得到 `'a'`），不同行会哈希出相同串；PG 侧 `concat_ws` 还要求参数为文本，数值列需显式 `::text`（MySQL 侧自动转换，不必加）；
+- 时间列（含 `deleted_at`）两侧统一渲染到同一时区、同一格式（8.4 节）。`deleted_at` **不得**写成 `deleted_at::text`——该写法走会话 `TimeZone` 输出、格式也与 MySQL `DATE_FORMAT` 不一致；
+- SQL 里的 `'Asia/Shanghai'` 是 8.4 节的**待实测假设**，Phase 4 用实测时区整体替换后再执行；
+- **JSON/jsonb 列不进 SQL checksum**（两侧规范化规则不同，见 7.2），改在 Go 校验工具中"解析后重序列化"比对；
+- **验收阈值：checksum 相等。** 不相等 → 11.3 分桶定位。
 
 ### 11.3 差异定位（mismatch 处理流程）
 
 ```sql
--- 两侧同构：按 id 分桶（每 10 万行）算局部 checksum，diff 出不一致桶
-SELECT (id / 100000) AS bucket, COUNT(*),
-       BIT_XOR(CAST(CONV(SUBSTR(MD5(CONCAT_WS('|', id, /* 同 11.2 字段 */)), 1, 16), 16, 10) AS UNSIGNED))
+-- MySQL：按 id 分桶（每 10 万 id 一桶）算局部 checksum
+SELECT (id DIV 100000) AS bucket, COUNT(*),
+       BIT_XOR(CAST(CONV(SUBSTR(MD5(CONCAT_WS('|', /* 同 11.2 字段与 COALESCE 口径 */)), 1, 8), 16, 10) AS UNSIGNED))
 FROM core.ke_forest GROUP BY bucket ORDER BY bucket;
--- PG 侧把 BIT_XOR/CONV 换成 11.2 的 bit_xor 写法；两侧输出 diff，对不一致桶内的 id 逐行比对
+
+-- PG：整数除法已按整除语义，桶宽必须与 MySQL 完全一致
+SELECT (id / 100000) AS bucket, COUNT(*),
+       bit_xor(('x' || substr(md5(concat_ws('|', /* 同 11.2 字段与 COALESCE 口径 */)), 1, 8))::bit(32)::bigint)
+FROM core.ke_forest GROUP BY bucket ORDER BY bucket;
 ```
+
+分桶口径：**两侧必须是同一表达式、同一桶宽**，否则桶号无法对齐。MySQL 的 `id / 100000` 返回小数（DECIMAL），不能当桶号；必须用 `id DIV 100000`（或 `FLOOR(id / 100000)`）。PG 侧 `id / 100000` 在 `id` 为整数时已是整除，保持原样。两侧输出 `diff`，对不一致桶内的 id 逐行比对（11.4 抽样口径同样适用于桶内）。
 
 处理规则：定位到行后以 **MySQL 为准**修复 PG（重载该行/该桶），修复后重跑 11.1/11.2。
 
@@ -566,7 +593,7 @@ SELECT * FROM core.ke_forest WHERE id % 97 = 0 ORDER BY id;
 | 3 | **collation 搜索变化**：ci → 区分大小写 | 等值查询召回下降、ci 唯一性消失 | 6.2 查询层改写（`lower()`/`ILIKE`/`~*`）+ 6.4 体检 + 11.5 召回对比兜底 |
 | 4 | **sequence 未重置**：ETL 后新写入主键冲突 | 切流后写入失败 | 4.2 节 `setval` 为 ETL 完成钩子（必执行步骤，进 11.6 对账表的"sequence 已重置"列） |
 | 5 | **部分索引/表达式索引丢失**：MySQL 前缀索引（`sub_part`）与函数索引（`expression`）在 AutoMigrate 重建时丢 | 查询性能退化、隐性约束消失 | 5.1 盘点 + 5.3 载数后重建 + 5.3 一致性兜底查询比对索引集合 |
-| 6 | **JSON 规范化**：jsonb key 顺序/空白/重复 key 变化 | 字节级依赖（罕见）与对账失败 | 7.2 校验走"解析后重序列化"；确认应用不依赖原始字节（grep 序列化比较逻辑，需要在 Phase 4 dry-run 验证） |
+| 6 | **JSON 规范化规则差异**：MySQL `json` 与 PG `jsonb` 都已规范化（key 排序、空白去除、重复 key 折叠保留最后一个），但数字字面量/转义/key 排序平局规则不同 | 字节级比对假阳性、对账失败 | 7.2：JSON 列不进 SQL checksum，改 Go 侧"解析后重序列化"比对；确认应用不依赖原始字节（grep 序列化比较逻辑，需要在 Phase 4 dry-run 验证） |
 | 7 | **时区/零日期**：8 小时偏移、`0000-00-00` 拒载 | 数据错误、ETL 中断 | 8.4 DSN `loc` 强制 + 8.1 零日期→NULL 规则 + 11.4 抽样时间字段逐值比对 |
 | 8 | **空串/NULL 混淆**：迁移期归一化改变语义 | 业务判断分支反转 | 8.2 原样搬运铁律，归一化必须逐列显式批准 |
 | 9 | **唯一索引 NULL 语义**：`NULLS NOT DISTINCT` 误用 | 多 NULL 行被拒/判重 | 5.4 逐唯一索引确认（PG15 特性不默认启用）+ 复合唯一索引含 NULL 列专项核对 |
