@@ -11,7 +11,7 @@
 | 推荐版本组合 | `gorm.io/gorm v1.30.1`（仓库现有）+ `gorm.io/driver/postgres v1.6.0` + `github.com/jackc/pgx/v5 v5.7.2` + `github.com/pgvector/pgvector-go v0.3.0` |
 | Go 版本约束 | 上述组合 go directive 均 ≤ 1.23，`go1.24.13 + GOTOOLCHAIN=local` 编译通过；`@latest`（pgx v5.12.0 / driver v1.6.3）要求 go ≥ 1.25，会迫使主仓库升 go directive |
 | dbtools/v2 | 上游 registry 已开放注册（`Register(scheme, factory)`），**Phase 1 自建 `postgres` factory 自注册，不改 vendor** |
-| vendor 增量 | 主仓库净新增 7 个包 ≈ **1.6 MB**（实测 du，见下） |
+| vendor 增量 | 主仓库净新增 6 个目录 ≈ **1.55 MB**（实测 du 求和；`x448/float16` 仓库已 vendored，非增量，见下） |
 | pgvector | Go 包 `github.com/pgvector/pgvector-go` v0.3.0（go 1.23）实测可编译；扩展需 `CREATE EXTENSION IF NOT EXISTS vector;` |
 | CGO | pgx 纯 Go 实现，PG 驱动**无 CGO 依赖**；CGO_ENABLED 维持现状即可 |
 
@@ -71,24 +71,24 @@ github.com/jackc/pgx/v5@v5.7.2  → pgpassfile、pgservicefile、puddle/v2、gol
 github.com/pgvector/pgvector-go@v0.3.0 → pgx/v5（≥ v5.7.2，MVS 会把 v5.6.0 抬到 v5.7.2）、x448/float16
 ```
 
-注意（pgvector 联动）：只加 driver/postgres v1.6.0 时解析到 pgx **v5.6.0**（go 1.20）；一旦加入 pgvector v0.3.0（其 go.mod require pgx ≥ v5.7.2），MVS 抬到 **v5.7.2**（go 1.21），仍兼容 go1.24。仓库现有 `golang.org/x/crypto v0.41.0 / x/sync v0.16.0 / x/text v0.28.0` 均高于所需（v0.36.0 / v0.12.0 / v0.23.0），MVS 保留仓库版本，**x/* 与 jinzhu 无需任何变动**。
+注意（pgvector 联动）：只加 driver/postgres v1.6.0 时解析到 pgx **v5.6.0**（go 1.20）；一旦加入 pgvector v0.3.0（其 go.mod require pgx ≥ v5.7.2），MVS 抬到 **v5.7.2**（go 1.21），仍兼容 go1.24。仓库现有 `golang.org/x/crypto v0.41.0 / x/sync v0.16.0 / x/text v0.28.0` 均高于所需（v0.36.0 / v0.12.0 / v0.23.0），且仓库 `go.mod` 已有 `github.com/x448/float16 v0.8.4 // indirect`（与 spike 解析版本相同，`vendor/` 中已存在），MVS 全部保留仓库版本，**x/*、jinzhu、x448/float16 均无需任何变动**。
 
 ## 3. Vendor 增量（实测，临时 module `go mod tidy && go mod vendor`）
 
 临时 module 自身 vendor 总量 9.0M（含 gorm 636K、`golang.org/x/*` 6.7M——后者仓库已 vendored 且版本更高，非增量）。**主仓库真正需要新增的包**（仓库 `vendor/` 中目前不存在任何 `github.com/jackc/*`，实测 du -sk）：
 
-| 新增 vendor 目录 | 大小（实测） | 说明 |
+| vendor 目录（除 x448 外均为净新增） | 大小（实测） | 说明 |
 | --- | --- | --- |
 | `vendor/github.com/jackc/pgx`（v5） | 1,344 KB | pgconn / pgproto3 / pgtype / pgxpool / stdlib 等 |
 | `vendor/github.com/jackc/puddle`（v2） | 80 KB | 连接池 |
 | `vendor/github.com/pgvector/pgvector-go` | 68 KB | vector / halfvec / sparsevec + pgx 子包 |
 | `vendor/github.com/jackc/pgpassfile` | 20 KB | `~/.pgpass` 解析 |
-| `vendor/github.com/x448/float16` | 36 KB | halfvec 的 float16 编码 |
+| `vendor/github.com/x448/float16`（**已 vendored，非增量**） | du 实测 36 KB，不计入合计 | pgvector halfvec 依赖；仓库 `go.mod` 已有 `x448/float16 v0.8.4 // indirect` 且 `vendor/` 中已存在（版本相同），**无需新增** |
 | `vendor/github.com/jackc/pgservicefile` | 16 KB | pg_service.conf 解析 |
 | `vendor/gorm.io/driver/postgres` | 56 KB | dialector（postgres.go / migrator.go / error_translator.go） |
-| **合计** | **≈ 1.6 MB（实测求和）** | 估计：加上 modules.txt/go.sum 行与文件系统开销，仓库 vendor 总增量 < 2 MB |
+| **合计（6 个净新增目录）** | **≈ 1.55 MB（实测求和，1,584 KB）** | 估计：加上 modules.txt/go.sum 行与文件系统开销，仓库 vendor 总增量 < 2 MB |
 
-Phase 1 需要做的：`go.mod` 增加 1 条 direct require（`gorm.io/driver/postgres`）+ 4 条 indirect（pgx、puddle、pgpassfile、pgservicefile；若同时接 pgvector 再加 2 条 direct + x448/float16 indirect），然后 `go mod tidy && go mod vendor` 并提交 vendor（按 AGENTS.md 流程）。
+Phase 1 需要做的：`go.mod` 增加 1 条 direct require（`gorm.io/driver/postgres`）+ 4 条 indirect（pgx、puddle、pgpassfile、pgservicefile；若同时接 pgvector 再加 2 条 direct，其 `x448/float16` 依赖仓库已有、无需新增），然后 `go mod tidy && go mod vendor` 并提交 vendor（按 AGENTS.md 流程）。
 
 ## 4. dbtools/v2 注册结论（实测代码）
 
@@ -103,7 +103,7 @@ func Register(scheme string, factory DriverFactory) {
 	drivers[strings.ToLower(scheme)] = factory
 }
 
-func Open(dburl string) (*gorm.DB, error) { /* 按 URL scheme 查表 → factory(dsn) → gorm.Open */ }
+func Open(dburl string) (*gorm.DB, error) { /* 按 URL scheme 查表 → factory(dburl)（入参为完整 dburl，归一化由各 factory 自行处理）→ gorm.Open */ }
 ```
 
 `mysqldrv`（`dbtools/v2/mysqldrv/driver.go`）只是**当前唯一的注册方**，通过 `init()` 自注册：
@@ -114,7 +114,7 @@ func init() {
 }
 ```
 
-仓库侧的既有用法（apps/keapp、keapi、corekg、kesearch、kechat、ketask 等约 30+ 处）均为 blank import 触发注册：
+仓库侧的既有用法（apps/keapp、keapi、corekg、kesearch、kechat、ketask 等 70+ 处）均为 blank import 触发注册：
 
 ```go
 import (
@@ -188,7 +188,7 @@ go mod graph | grep -E "^(gorm.io/driver/postgres|github.com/jackc/pgx/v5) "
 go mod tidy && go mod vendor
 du -sk vendor/gorm.io/driver/postgres vendor/github.com/jackc/{pgx,pgpassfile,pgservicefile,puddle} \
         vendor/github.com/pgvector vendor/github.com/x448
-#   → 56 / 1344 / 20 / 16 / 80 / 68 / 36（KB）
+#   → 56 / 1344 / 20 / 16 / 80 / 68 / 36（KB；x448 的 36 不计增量——仓库已 vendored v0.8.4）
 
 # 5. pgvector 版本探测
 go list -mod=mod -m -json github.com/pgvector/pgvector-go@latest  # v0.4.1, GoVersion 1.25.0
