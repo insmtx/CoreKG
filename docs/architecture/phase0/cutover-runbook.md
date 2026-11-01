@@ -1,0 +1,563 @@
+# CoreKG 单体一次性切换 Runbook
+
+> 元信息：Phase 0 / Task 13 产出。执行对象：把当前"`apps/*` 多服务 + MySQL 权威"形态一次性切换为"`cmd/corekg` 单体 + PostgreSQL 权威"形态（Phase 1–4 的最终动作）。配套文档：`docs/architecture/phase0/pg-migration-assessment.md`（Task 12，校验口径与回滚原则，下称"评估文档"）、`docs/architecture/phase0/golden-path-baseline.md`（Task 9，回归基线）、`docs/architecture/phase0/pg-driver-spike.md`（Task 10，PG 接入）、`docs/architecture/phase0/route-decisions.md`（Task 8，路由处置）。
+>
+> **本文所有命令都是占位符形状（command shapes）**：`<MYSQL_DSN>`、`<PG_DSN>`、`<IMAGE_TAG>`、`<S3_ENDPOINT>` 等尖括号内容在执行时替换为真实值；**本文不含、也不应含任何真实密码、密钥、DSN**。执行时的真实凭据一律通过环境变量或密钥管理系统（`<SECRET_MANAGER>`）注入，绝不写入仓库、工单、IM 或 shell 历史（见 §1.6）。
+>
+> **当前状态（2026-11-01，Phase 0）：本文是可审阅的执行模板，尚不可执行。** 四个硬 blocker 见 §2（golden-path 11/11 未跑、live inventory 缺失、ETL `--apply` 未实现、DBA/SRE review 未进行）。在 blocker 关闭与 Phase 4 交付前，任何人不得以本文为依据发起切换。
+
+## 1. 范围与原则
+
+### 1.1 切换模式：一次性切换，不做长期双写
+
+- **T0 维护窗口内完成**：停写 → 最终增量 ETL → 校验 → 启动新栈 → 灰度放量。此后 PostgreSQL 是唯一权威写库，MySQL 转为只读归档。
+- **不做长期 MySQL↔PG 双写**、不做按租户分批切、不做"读 PG 写 MySQL"过渡态。理由：
+  1. 双写需要两套一致性协议与冲突裁决，本仓库没有现成组件，引入成本高于冻结窗口内追平（自研 ETL + checkpoint 重放 + 内嵌校验，评估文档 §10.1/§12.3）；
+  2. 双写期的回滚面比一次性切换更大（两侧都可能有写），数据丢失边界反而更难向业务说清；
+  3. 回滚的兜底是"保留旧栈 ≥ 7 天 + 归档 90 天"（§3/§6），不依赖双写。
+- 若业务最终给出"不可接受任何写入丢失"的目标（RPO = 0 且不接受的场景见 §7.5），一次性切换模式不满足，需升级架构评审另立方案，**不修改本 runbook 去拼凑双写**。
+
+### 1.2 发布与分支策略：内部 Phase 0–4，对外一次发布
+
+- Phase 0–4 是**内部里程碑**，不对外发布中间版本。对外只有一个版本：`<REGISTRY>/corekg/corekg-api:<IMAGE_TAG>`（含 Phase 0–4 全部改动，`make push-image APP=corekg` 产出）。
+- 分支策略：
+  - 日常开发在集成分支 **`monolith-v2`**；
+  - **T-1 起 `main` 冻结合并**：不接受功能合并，仅接受 cutover 阻塞修复（需 Go/No-Go 会议批准，且同步 cherry-pick 到 `monolith-v2`）；
+  - 切换完成签收（T+1）后 `monolith-v2` 合回 `main`，解冻；若切换失败，`main` 保持冻结至重试窗口确定。
+- 回滚不按 phase 拆分：回滚 = 部署 `<OLD_IMAGE_TAG>` + 流量指回 MySQL（§6），一个动作覆盖全部 Phase 0–4 改动。
+
+### 1.3 范围内 / 范围外
+
+| 范围 | 内容 |
+|---|---|
+| **内** | 系统库 5 个 schema（`core`/`account`/`knownow`/`chat`/`sale`）→ 单 PG 库同名 schema（评估文档 §1.1）；ES `ke_*` 索引全量重建（从 PG 回灌，`ik_max_word`）；keapi/MCP 流量随单体切换 |
+| **外** | 对象存储（MinIO/S3）数据**不搬迁**（桶与对象原样保留，仅记录清单，§3.2）；外部租户 MySQL 数据源（`pkgs/plugins/dbplugins/mysqlplugin`，永久保留 MySQL 连接，评估文档 §9.2）；Coze/workflow 库（按 `route-decisions.md` 删除规则处置，不迁移）；`/v2` 挂载等 Reopen 项按 `route-decisions.md` |
+
+### 1.4 权威性原则
+
+MySQL 在切换签收前始终是权威库（评估文档 §12.2）：ETL/校验期间 PG 仅是校验目标；T0 停写（`super_read_only`）后 PG 追平；G1–G9 全绿 + T+1 签收后权威转移完成。签收前任何"PG 上的数据"都不得当作业务数据源。
+
+### 1.5 执行者假设与前提
+
+目标执行者是**未参与 Phase 0–4 开发的工程师**：所有步骤自包含，命令形状、判据与失败处置都在本文，不要求执行者理解迁移代码。执行前提：
+
+1. 跳板机 `<OPS_HOST>` 可访问 MySQL、PG、ES、对象存储、网关管理面、NATS；
+2. 仓库 checkout 到 `<MONOLITH_V2_COMMIT>`（`monolith-v2` 分支），`scripts/golden-path.sh` 可用；
+3. 凭据经 `<ENV_FILE>`（权限 600，运行时从 `<SECRET_MANAGER>` 生成，用后删除）注入；
+4. 产物目录 `<ARTIFACT_DIR>` 可写且容量 ≥ dump 大小 × 2。
+
+### 1.6 记录纪律
+
+- 门禁未通过就是未通过，禁止"看起来差不多"放行；所有门禁产物（log/CSV/截图）存 `<ARTIFACT_DIR>` 并归档；
+- 真实凭据不得出现在命令行参数（用 `MYSQL_PWD`/`PGPASSWORD`/`"$S3_SECRET_KEY"` 等环境变量）、不得粘贴进工单与 IM；
+- 本文任何"当前状态"标注（如 §2 的 ⛔）只描述写文档当天的事实，后续更新必须随事实修改，不得提前写"已通过"。
+
+## 2. 切换前检查清单
+
+图例：✅ 已完成（有据可查）｜⬜ 未做（按时间表排期）｜⛔ **blocker（不关闭不得进入 T-7 时间表）**。owner 列对应 §8.1 角色。
+
+### 2.1 代码与镜像
+
+| # | 检查项 | owner | 完成标准 | 现状（2026-11-01） |
+|---|---|---|---|---|
+| 1 | `monolith-v2` 集成分支可交付 | 应用 | CI 绿；`make local APP=corekg` 产出 `bundles/corekg`；`make linux APP=corekg` 产出部署二进制；`make arch-test` 通过 | ✅ Phase 0 骨架可构建；Phase 1–4 完成度以各 phase 交付为准 |
+| 2 | 不可变镜像 | SRE | `make push-image APP=corekg` 推送 `<REGISTRY>/corekg/corekg-api:<IMAGE_TAG>`，记录 digest（`sha256:<...>`） | ⬜ Phase 4 |
+| 3 | 回滚镜像 | SRE | 记录当前生产在跑的 `<OLD_IMAGE_TAG>` 与 digest，确认保留 ≥ 7 天 | ⬜ |
+| 4 | `main` 合并冻结 | SRE | T-1 生效；冻结时点 PR 列表为空或全部延后 | ⬜ 计划内（§9） |
+
+### 2.2 回归与迁移基线（诚实标注 blocker）
+
+| # | 检查项 | owner | 完成标准 | 现状（2026-11-01） |
+|---|---|---|---|---|
+| 5 | Task 9 golden-path 11/11 | 应用 | 在 Docker 可用宿主机对旧栈完整跑通 11 stage 并回填基线（`golden-path-baseline.md` 的回填清单）；种子账号/模型/`KEAPI_API_KEY` 就绪 | ⛔ **未执行**：当前环境无 docker（宿主根分区 99% 用满）、无种子数据，仅 stage 1 实测通过。详见 `golden-path-baseline.md` §"Environment status" |
+| 6 | Task 11 live inventory | DBA | `docs/architecture/phase0/mysql-inventory.json` 已用 `corekg migrate from-mysql`（只读）生成、脱敏、提交 | ⛔ **缺失**：Task 11 为 DONE_WITH_BLOCKER（无可达 MySQL），文件不存在 |
+| 7 | Task 12 评估文档 | DBA | `pg-migration-assessment.md` 已提交；其 §11 校验口径并入本文 §5、§12 回滚原则并入本文 §6；DBA 实际 review 归第 25 项 | ✅ 文档已提交（Task 12）；其数值列全部留待 Phase 4 inventory（诚实标注，未伪造） |
+| 8 | ETL `--apply` | 应用 | `corekg migrate from-mysql --apply` 实现（批量 COPY、checkpoint、setval 钩子、校验内嵌，评估文档 §10.2） | ⛔ **未实现**：Phase 0 显式拒绝（`cmd/corekg/migrate.go` 报 "apply is not implemented in phase 0"），当前只有只读 dry-run |
+| 9 | 回滚演练 | DBA | 评估文档 §12.4：至少一次完整回滚序列演练（含 `DROP SCHEMA ... CASCADE` + checkpoint 重放），记录各步耗时 | ⬜ Phase 4 |
+| 10 | MySQL 时区实测 | DBA | 评估文档 §8.4：实测 `@@global.time_zone` 并填入 ETL 配置 | ⬜ Phase 4 |
+
+### 2.3 决策定稿
+
+| # | 检查项 | owner | 完成标准 | 现状（2026-11-01） |
+|---|---|---|---|---|
+| 11 | 路由/Coze 决策 | 应用 | `route-decisions.md` 定稿；Reopen 项（`/v2` 挂载、`chat.ExternalToken` 等）全部关闭或书面延期到切换后 | 部分完成：决策文档 ✅；Reopen 项 ⬜ |
+| 12 | pgvector | DBA | 若 Phase 1+ 使用（`pg-driver-spike.md` 结论：`pgvector-go v0.3.0` 可用）：目标库执行 `CREATE EXTENSION IF NOT EXISTS vector;` 并确认在备份范围内 | ⬜ 是否使用在 Phase 1 决策 |
+
+### 2.4 基础设施与运维准备
+
+| # | 检查项 | owner | 完成标准 | 现状（2026-11-01） |
+|---|---|---|---|---|
+| 13 | PG 目标库就绪 | DBA | 网络/账号/权限/schema search_path 验证；`pg_dump`/`pg_dumpall`/`psql` 客户端在 `<OPS_HOST>` 可用 | ⬜ |
+| 14 | PG 基线备份 | DBA | §3.4 命令执行成功（T-1） | ⬜ |
+| 15 | secrets 注入通道 | SRE | `CORekG_MYSQL_DSN`、`<PG_DSN>`、`KEAPI_API_KEY`、S3/ES 凭据全部经 `<SECRET_MANAGER>` → `<ENV_FILE>` 注入；仓库/文档零明文 | ⬜ |
+| 16 | DNS TTL | SRE | 对外域名 TTL 降至 ≤ 60 秒（T-1 生效） | ⬜ |
+| 17 | 证书 | SRE | 网关 TLS 证书剩余有效期 > 窗口时长 + 30 天 | ⬜ |
+| 18 | 监控/大盘/告警 | SRE | 错误率、P95、DB 连接、队列深度、ES 集群健康的大盘与告警就绪并指向 on-call | ⬜ |
+| 19 | on-call | SRE | 窗口值班表 + 每角色备份人（§8.1） | ⬜ |
+| 20 | 备份恢复演练 | DBA | §3.6 至少一次成功（T-7） | ⬜ |
+| 21 | 磁盘容量 | DBA | PG 数据盘 ≥ 预估 × 1.5；`<DUMP_DIR>` ≥ dump 大小 × 2；ES 重建空间 ≥ 现索引 × 2 | ⬜ |
+| 22 | ES snapshot repo | DBA | 快照仓库注册成功 + 一次快照成功（T-7） | ⬜ |
+| 23 | MCP/keapi API Key | 应用 | 现有 keapi API Key 随 `account` schema 迁移后仍可鉴权（golden-path stage 10/11 依赖）；是否重签发已决策并（如需）公告 | ⬜ |
+| 24 | 队列排空流程 | SRE | NATS 暂停 consumer + pending 清零的流程已演练（§4.2） | ⬜ |
+
+### 2.5 签收
+
+| # | 检查项 | owner | 完成标准 | 现状（2026-11-01） |
+|---|---|---|---|---|
+| 25 | DBA/SRE review 本文 | DBA/SRE | 文末"附：DBA/SRE review 记录"两行均 approve | ⛔ **未进行**（见文末待确认清单） |
+| 26 | 业务签收 | 产品 | 维护窗口对外公告已发；数据丢失边界（§7）已向业务说明并理解 | ⬜ T-1 |
+
+**结论：当前为 NO-GO。** 上述 ⛔（第 5、6、8、25 项）全部关闭且 Phase 4 交付后，才可进入 §9 的 T-7 时间表。**本文不声称 golden-path 已通过、inventory 已生成——它们没有。**
+
+## 3. 备份与归档
+
+备份在两个时点执行：**T-7 演练**（全量 + 恢复演练）与 **T0 停写后**（最终全量，§4.1 步骤 3）。命令一致，产物带日期后缀区分。所有产物统一落 `<DUMP_DIR>`，归档到对象存储并保留 **90 天**。
+
+### 3.1 MySQL 全量 dump 与 binlog 位点
+
+```bash
+# 全量 dump（5 个系统库 = dbutil 五句柄，评估文档 §1.1）。
+# --single-transaction 仅对 InnoDB 一致；若 Phase 4 inventory 发现 MyISAM 表，
+# 改用 --lock-all-tables 并由 DBA 确认停写窗口（本 runbook 默认停写后执行，可接受）。
+# --source-data=2 把 binlog 位点以注释写进 dump 头（MySQL ≤ 8.0.25 为 --master-data=2）。
+MYSQL_PWD="$MYSQL_PASSWORD" mysqldump \
+  --host=<MYSQL_HOST> --port=<MYSQL_PORT> --user=<MYSQL_USER> \
+  --single-transaction --source-data=2 --routines --triggers --events \
+  --databases core account knownow chat sale \
+  --result-file=<DUMP_DIR>/mysql-full-<DATE>.sql
+
+# 显式记录 binlog 位点（回滚后增量补偿的起点，评估文档 §12.2）。
+# MySQL ≥ 8.4 用 SHOW BINARY LOG STATUS；更早版本回退 SHOW MASTER STATUS（DBA 按 server 版本确认）。
+MYSQL_PWD="$MYSQL_PASSWORD" mysql \
+  --host=<MYSQL_HOST> --port=<MYSQL_PORT> --user=<MYSQL_USER> \
+  -e "SHOW BINARY LOG STATUS;" | tee <DUMP_DIR>/binlog-coord-<DATE>.txt
+# 若报 Unknown statement，改用：
+#   -e "SHOW MASTER STATUS;" | tee <DUMP_DIR>/binlog-coord-<DATE>.txt
+# 断言：输出含非空 file 名与 position，且与 dump 头部 CHANGE REPLICATION SOURCE 注释一致。
+```
+
+### 3.2 对象存储清单（数据不搬，只留清单）
+
+```bash
+mc alias set <S3_ALIAS> <S3_ENDPOINT> <S3_ACCESS_KEY> "$S3_SECRET_KEY"   # 密钥走环境变量
+mc ls --recursive --json <S3_ALIAS>/<S3_BUCKET> > <DUMP_DIR>/s3-manifest-<DATE>.jsonl
+mc du --recursive <S3_ALIAS>/<S3_BUCKET> | tee <DUMP_DIR>/s3-du-<DATE>.txt
+# 断言：jsonl 行数 > 0；对象总数与总字节数记入 s3-du（回滚后孤儿清理的基线，§7.3）。
+```
+
+### 3.3 ES 索引快照
+
+```bash
+# 一次性注册快照仓库（fs 类型需 elasticsearch.yml 的 path.repo 包含 <SNAPSHOT_DIR>，SRE 确认）
+curl -sS -X PUT "<ES_ENDPOINT>/_snapshot/<SNAPSHOT_REPO>" \
+  -u "<ES_USER>:$ES_PASSWORD" -H 'Content-Type: application/json' \
+  -d '{"type":"fs","settings":{"location":"<SNAPSHOT_DIR>"}}' | tee <DUMP_DIR>/es-repo-<DATE>.json
+
+# 全量快照（ke_* 及全部业务索引；大索引用后台模式）
+curl -sS -X PUT "<ES_ENDPOINT>/_snapshot/<SNAPSHOT_REPO>/pre-cutover-<DATE>?wait_for_completion=false" \
+  -u "<ES_USER>:$ES_PASSWORD" | tee <DUMP_DIR>/es-snapshot-<DATE>.json
+
+# 轮询直至 state == SUCCESS（占位：循环由执行者按 <ES_ENDPOINT> 实际情况实现）
+curl -sS "<ES_ENDPOINT>/_snapshot/<SNAPSHOT_REPO>/pre-cutover-<DATE>?pretty" \
+  -u "<ES_USER>:$ES_PASSWORD" | tee -a <DUMP_DIR>/es-snapshot-<DATE>.json
+```
+
+### 3.4 PG 基线备份
+
+```bash
+# AutoMigrate + 全量 ETL 完成后的 PG 状态快照（custom 格式，pg_restore 可选择性恢复）
+PGPASSWORD="$PG_PASSWORD" pg_dump --format=custom \
+  --host=<PG_HOST> --port=<PG_PORT> --user=<PG_USER> --dbname=<PG_DBNAME> \
+  --file=<DUMP_DIR>/pg-baseline-<DATE>.dump
+
+# 全局对象（roles/tablespaces；pg_dump 不含，回滚取证与重建需要）
+PGPASSWORD="$PG_ADMIN_PASSWORD" pg_dumpall \
+  --host=<PG_HOST> --port=<PG_PORT> --user=<PG_ADMIN_USER> \
+  --globals-only --file=<DUMP_DIR>/pg-globals-<DATE>.sql
+```
+
+### 3.5 归档与保留（90 天）
+
+```bash
+cd <DUMP_DIR>
+sha256sum mysql-full-<DATE>.sql binlog-coord-<DATE>.txt \
+  s3-manifest-<DATE>.jsonl s3-du-<DATE>.txt \
+  pg-baseline-<DATE>.dump pg-globals-<DATE>.sql \
+  es-repo-<DATE>.json es-snapshot-<DATE>.json > SHA256SUMS-<DATE>
+
+mc cp --recursive <DUMP_DIR>/ <S3_ALIAS>/<BACKUP_BUCKET>/cutover/<DATE>/
+mc cat <S3_ALIAS>/<BACKUP_BUCKET>/cutover/<DATE>/SHA256SUMS-<DATE> | tee <DUMP_DIR>/SHA256SUMS-verify-<DATE>
+# 断言：SHA256SUMS-verify 与本地 SHA256SUMS-<DATE> 逐行一致（上传未损坏）。
+
+# 保留 90 天：对象存储生命周期规则或日历提醒删除；删除前需 DBA 复核（§8.4 第 8 项不覆盖此归档）。
+```
+
+### 3.6 恢复演练（T-7，隔离实例）
+
+```bash
+# MySQL 恢复到演练实例后抽查行数（§5 G2 口径）
+MYSQL_PWD="$MYSQL_PASSWORD" mysql --host=<DRILL_MYSQL_HOST> --port=<DRILL_MYSQL_PORT> \
+  --user=<MYSQL_USER> < <DUMP_DIR>/mysql-full-<DATE>.sql
+PGPASSWORD="$PG_PASSWORD" pg_restore \
+  --host=<DRILL_PG_HOST> --port=<DRILL_PG_PORT> --user=<PG_USER> --dbname=<DRILL_PG_DBNAME> \
+  <DUMP_DIR>/pg-baseline-<DATE>.dump
+# 断言：两侧关键表 COUNT(*) 与源一致；ES 快照可 restore 到演练集群（仅验证，不校验召回）。
+```
+
+演练结果（耗时、失败与修复）写入 `<ARTIFACT_DIR>/restore-drill-<DATE>.md`，作为 T0 时间参数依据。
+
+## 4. 切换步骤
+
+### 4.1 步骤总览（T0 当天，按序执行）
+
+| # | 步骤 | 内容 | 通过条件 | 失败处置（abort） |
+|---|---|---|---|---|
+| 1 | 冻结与通知 | 维护公告生效、网关维护页开、`main` 冻结确认（T-1 已做） | 公告可见、维护页生效 | — |
+| 2 | 停写 | 网关只读/维护、停 worker、MySQL `super_read_only`、排空 NATS | queue pending = 0；`@@super_read_only = 1` | 排空超时 `<DRAIN_TIMEOUT_MIN>` → 解除冻结中止切换（**零数据丢失**，MySQL 未动） |
+| 3 | 最终备份 | §3 全套（final dump + binlog 位点 + S3 清单 + ES 快照 + PG dump） | SHA256 归档核验一致 | 中止切换（同上，无损） |
+| 4 | 最终增量 ETL | `corekg migrate from-mysql --apply`（Phase 4 交付）+ sequence 重置 | 工具退出码 0 | 按评估文档 §11.3 定位；超过 `<MAX_WINDOW_HOURS>` → 回滚（无损，PG 未接流量） |
+| 5 | 数据校验 | §5 G2–G5 | 全绿 | 修复后**重跑全套**；超时 → 回滚（无损） |
+| 6 | 启动新栈 | 部署 `<IMAGE_TAG>`；`/healthz`；golden-path 11/11（G1） | 退出码 0 | 窗口内修复重跑；超时/不可修复 → 回滚（无损） |
+| 7 | 灰度放量 | 1% → 10% → 100%，每档观察 `<CANARY_OBSERVE_MIN>` 分钟 | 每档 G6–G9 达标 | 触发 §6.2 条件 → 停止升档 / 回滚（**此时已有数据丢失面**，§7） |
+| 8 | 观察 | 全量后观察 `<OBSERVE_HOURS>`（默认 1 小时），T+1 全天 | 无 §6.2 触发 | 按 §6 |
+| 9 | 解冻 | DNS TTL 恢复、`main` 解冻、维护公告关闭、完成通知 | — | — |
+
+**止损原则**：步骤 2–6 之间任何失败都可无损中止（PG 未接业务流量）；步骤 7 之后失败进入 §6 回滚，必须先读 §7。窗口总预算 `<MAX_WINDOW_HOURS>`（由 T-7 演练数据回填），超预算一律中止/回滚。
+
+### 4.2 停写命令形状
+
+```bash
+# (1) 网关切维护页/只读（占位形状：以实际网关机制为准，SRE 替换）
+curl -sS -X PUT "<GATEWAY_ADMIN_URL>/mode" \
+  -H "Authorization: Bearer <GATEWAY_ADMIN_TOKEN>" \
+  -H 'Content-Type: application/json' \
+  -d '{"mode":"maintenance"}'
+
+# (2) 停 worker（消费 NATS 的 keworker/parser 等进程；以部署形态为准）
+ssh <DEPLOY_HOST> 'systemctl stop corekg-worker'   # docker/k8s 用等价命令
+
+# (3) MySQL 冻结写（评估文档 §12.2）
+MYSQL_PWD="$MYSQL_PASSWORD" mysql --host=<MYSQL_HOST> --port=<MYSQL_PORT> --user=<MYSQL_USER> \
+  -e "SET GLOBAL super_read_only = ON; SELECT @@global.super_read_only AS frozen;"
+# 断言：frozen == 1。失败（权限/复制拓扑）→ DBA 处理或中止。
+
+# (4) 排空队列（NATS；占位形状）
+nats --server <NATS_URL> consumer info <NATS_STREAM> <NATS_CONSUMER>
+# 断言：NumAckPending 与 NumPending 均为 0（逐 consumer 检查；清单 T-7 冻结）。
+# 超过 <DRAIN_TIMEOUT_MIN> 未清零 → 按 §4.1 步骤 2 的 abort 处置。
+```
+
+### 4.3 最终增量 ETL 命令形状
+
+```bash
+# Phase 4 交付后的形状。Phase 0 现状：--apply 显式拒绝（§2 第 8 项 ⛔），此命令当前不可执行。
+./bundles/corekg migrate from-mysql \
+  --dsn "$CORekG_MYSQL_DSN" \
+  --schemas core,account,knownow,chat,sale \
+  --apply \
+  --checkpoint <CHECKPOINT_DIR>/etl-<DATE>.json
+# sequence 重置（评估文档 §4.2 的守卫写法）与 §5 G2–G4 校验内嵌于该工具（评估文档 §10.2）；
+# 若 Phase 4 交付时拆分为独立步骤，则按评估文档 §4.2/§11 手动执行，顺序不可换。
+```
+
+### 4.4 启动新栈与灰度命令形状
+
+```bash
+# 部署（以现有部署通道为准：CI SSH 部署 / make push-image；占位）
+ssh <DEPLOY_HOST> '<DEPLOY_SCRIPT> <REGISTRY>/corekg/corekg-api:<IMAGE_TAG>'
+
+# 健康检查（golden-path stage 1 同款）
+curl -sS <COREKG_BASE_URL>/healthz    # 断言：HTTP 200 且 .status == "ok"
+
+# golden-path 全量 11 stage（对 PG 新栈；凭据经 <ENV_FILE> 注入，600 权限，用后删）
+# shellcheck disable=SC1090
+source <ENV_FILE>    # TEST_USERNAME / TEST_PASSWORD_MD5 / MODEL_ID / KEAPI_API_KEY / EXPECT_TEXT
+BASE_URL=<COREKG_BASE_URL> scripts/golden-path.sh 2>&1 | tee <ARTIFACT_DIR>/golden-path-pg-<DATE>.log
+# 断言：退出码 0（11/11）；非 0 时 log 内含 stage=<name> FAILED 定位。
+
+# 灰度（占位形状：以实际网关/负载均衡机制为准）
+curl -sS -X PUT "<GATEWAY_ADMIN_URL>/routes/corekg/canary" \
+  -H "Authorization: Bearer <GATEWAY_ADMIN_TOKEN>" -H 'Content-Type: application/json' \
+  -d '{"weight_percent":1}'          # 依次 1 → 10 → 100；每档间隔 <CANARY_OBSERVE_MIN> 分钟
+```
+
+### 4.5 全局中止标准
+
+无论当前处于哪一步，出现以下任一情况**立即中止**（未放流量走 §4.1 abort；已放流量走 §6）：
+
+1. 超过 `<MAX_WINDOW_HOURS>` 未完成步骤 6；
+2. 备份不可核验（SHA256 不一致、dump 不完整）；
+3. 发现评估文档 §12.1 风险清单中的数据损坏类事件（如 `bigint unsigned` 溢出批量出现）；
+4. 值班人判断继续的风险大于收益（记录判断依据，事后复盘）。
+
+## 5. 验证门禁
+
+### 5.1 门禁清单
+
+| # | 门禁 | 通过标准 | 执行时点 | 产出物 |
+|---|---|---|---|---|
+| G1 | golden-path 11 stage | 退出码 0，11/11 全绿（`scripts/golden-path.sh`） | 启动新栈后、灰度前；T+1 复跑 | log |
+| G2 | 行数 + PK min/max | 每表 `COUNT`/`MIN`/`MAX` 三项两侧完全相等（评估文档 §11.1） | ETL 后 | 对账 CSV |
+| G3 | 关键字段 checksum | 每表 `BIT_XOR` 相等（评估文档 §11.2 的 8 hex/32bit 口径；JSON 列除外，走 Go 重序列化比对） | ETL 后 | 对账 CSV |
+| G4 | 抽样确定性比对 | 抽样行零差异（评估文档 §11.4） | ETL 后 | 行级 diff |
+| G5 | ES 重建 + 搜索召回 | Top-10 命中重叠率下降 ≤ 2pp（§5.2） | ES 重建后 | 召回报告 |
+| G6 | chat P95 | ≤ 基线 × 1.2 且 ≤ 5000ms（或产品 SLO `<CHAT_SLO_MS>`，取更严者）（§5.3） | 灰度每档 | 监控截图/压测报告 |
+| G7 | MCP | `initialize` HTTP 200 含 `"result"`；`tools/list` 的 `result.tools` 非空（§5.4） | 启动新栈后 | log |
+| G8 | keapi search | `.code == 0` 且 `doc_search_result` 非空（§5.4） | 启动新栈后 | log |
+| G9 | 错误率/延迟 | 5xx 率 ≤ 基线；全接口 P95 ≤ 基线 × 1.2 | 灰度每档 | 监控截图 |
+
+G2–G4 汇总进评估文档 §11.6 的每表对账表，DBA 逐行签收。**任一门禁失败：未放流量 → 修复后重跑全套（不得只重跑失败项）；已放流量 → 按 §6.2 触发条件处置。**
+
+### 5.2 搜索召回对比口径（G5）
+
+- **query 集**：`<RECALL_QUERY_SET>`（T-7 冻结；来源：迁移前 30 天高频搜索 query 抽样 `<RECALL_N>` 条 + golden-path 的 `EXPECT_TEXT` 唯一 token；清单存 `<ARTIFACT_DIR>/recall-queries-<DATE>.jsonl`）。
+- **方法**：迁移前（旧栈）与 ES 从 PG 重建后（新栈）各执行同一 query 集的 `ForestSearch`，取每条 Top-10 文档 id 集合；指标 = 平均重叠率 `Σ|new ∩ old| / (10 × N)`。
+- **通过标准**：平均重叠率 ≥ 0.98（即下降 ≤ 2 个百分点）。不达标先查 ES 重建完整性，再查评估文档 §6 的 DB 直查改写（`~*`/`ILIKE` 站点遗漏）。
+
+```bash
+curl -sS <COREKG_BASE_URL>/v3/kesearch.ForestSearch \
+  -H 'Content-Type: application/json' \
+  -d @<RECALL_QUERY_FILE> | jq '.doc_search_result[].file_id'   # 字段名以实际响应为准
+```
+
+### 5.3 chat P95 口径（G6）
+
+- 基线 = 迁移前 7 天监控的 chat 接口 P95 `<CHAT_P95_BASELINE_MS>`；监控缺历史则用压测（`<LOAD_TOOL>` 以 `<CHAT_RPS>` 持续 15 分钟）。
+- 目标 = `min(基线 × 1.2, 5000ms)`；若产品已定 SLO `<CHAT_SLO_MS>`，取更严格者。
+- 注意：golden-path stage 9 是**单次请求**，只作可用性断言（`.answer` 非空），不能当 P95 依据。
+
+### 5.4 MCP 与 keapi 验证命令（G7/G8）
+
+```bash
+# initialize（协议版本与 scripts/golden-path.sh 一致）
+curl -sS -D <ARTIFACT_DIR>/mcp-headers-<DATE>.txt <COREKG_BASE_URL>/v3/keapi/mcp \
+  -H "Authorization: Bearer <KEAPI_API_KEY>" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"cutover-check","version":"1.0"}}}'
+# 断言：HTTP 200 且响应含 "result"。
+
+# tools/list：从 mcp-headers-<DATE>.txt 取 Mcp-Session-Id（响应头缺失时记录在案并人工判定；
+# 解析方式与 scripts/golden-path.sh 一致）
+MCP_SESSION_ID=$(grep -i '^mcp-session-id:' <ARTIFACT_DIR>/mcp-headers-<DATE>.txt \
+  | head -n1 | sed 's/^[^:]*:[[:space:]]*//; s/\r$//')
+curl -sS <COREKG_BASE_URL>/v3/keapi/mcp \
+  -H "Authorization: Bearer <KEAPI_API_KEY>" \
+  -H "Mcp-Session-Id: $MCP_SESSION_ID" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+# 断言：HTTP 200 且 result.tools 为非空数组（当前 21 个工具，见 docs/mcp-server.md）。
+
+# keapi search（golden-path stage 10 同款）
+curl -sS <COREKG_BASE_URL>/v3/keapi.Search \
+  -H "Authorization: Bearer <KEAPI_API_KEY>" -H 'Content-Type: application/json' \
+  -d @<KEAPI_QUERY_FILE>
+# 断言：.code == 0 且 (.response // .Response).doc_search_result | length > 0。
+```
+
+### 5.5 Go/No-Go 定义
+
+- **会议**：T0 前 `<GO_NOGO_TIME>`（默认 T-1 21:00），§8.1 四方 owner 到场（可远程）。
+- **GO 条件（同时满足，缺一不可）**：
+  1. §2 清单无 ⛔，⬜ 项仅剩"窗口内才能执行"的动作（T-1/T0 项）；
+  2. Phase 4 演练记录：G1–G5 在演练环境全绿且记录在 `<ARTIFACT_DIR>`；
+  3. 回滚演练完成（§2 第 9 项，评估文档 §12.4 要求）；
+  4. 业务确认维护窗口已公告、数据丢失边界（§7）已说明。
+- **NO-GO 处置**：窗口顺延 `<NEXT_WINDOW_DATE>`；若 `main` 已冻结且未开始停写，立即解冻；若已停写则按 §4.1 步骤 2 的 abort 无损恢复。
+- **灰度升档 mini Go/No-Go**：每档观察期末，SRE owner（应用 owner 备份）依据 G6–G9 决定"升档 / 保持观察 / 回滚"；判断与依据记入 status 记录。
+
+## 6. 回滚步骤
+
+### 6.1 保留物（不提前清理）
+
+| 保留物 | 保留方式 | 最短期限 |
+|---|---|---|
+| 旧镜像 `<OLD_IMAGE_TAG>` | 镜像仓库不删 tag | ≥ 7 天 |
+| 旧 MySQL | `super_read_only = ON` 或停机保留；T0 前的 final dump + binlog 归档另存 90 天（§3.5） | ≥ 7 天 |
+| 旧 ES 索引 | 索引未删除则原地保留；若重建覆盖同名索引，用 pre-cutover 快照恢复（§6.3） | ≥ 7 天 |
+| PG 库 | **回滚后不删除**：只读留存取证（仅 DBA/排障可访问），直到 postmortem 关闭 + 数据处置方案签收，**可能 > 7 天** | ≥ 7 天，至 postmortem 关闭 |
+| 对象存储 bucket | 原样不动（无回滚动作；孤儿处置见 §7.3） | 不限 |
+
+### 6.2 触发条件
+
+**硬触发**（值班人直接执行 §6.3，事后 30 分钟内通报；无需等会议）：
+
+1. G1–G4 任一失败且 30 分钟内未定位或未修复（数据正确性不可妥协）；
+2. 新栈 5xx 错误率 > 5% 持续 10 分钟；
+3. chat P95 > 基线 × 2 持续 15 分钟；
+4. 出现数据损坏证据（运行期校验漂移、业务报错指向数据错误）。
+
+**软触发**（召开 Go/No-Go 会议（§5.5）决定回滚或继续）：
+
+5. G5 召回下降在 2pp 边缘（重跑确认后仍不达标）；
+6. P95 退化在基线 × 1.2 至 × 2 之间；
+7. 非核心功能异常（数据正确、个别边缘 action 报错）。
+
+**冻结窗口内**（已停写、未放流量，即 §4.1 步骤 2–6 期间）：任何门禁失败直接走 §4.1 的 abort——此时**零业务数据丢失**，是最便宜的"回滚"（评估文档 §12.4）。
+
+### 6.3 回滚执行序列（顺序不可换）
+
+1. **冻结 PG 写入**（先于一切切回动作，防止丢失面扩大）：停新 `corekg`（或网关摘除 100% 流量）+ PG 侧只读兜底 + 终断既有连接；
+2. **业务确认数据丢失边界**（§7.4）：产品 owner 签字；未签字不得继续。若 PG 已接受写入且业务不接受丢失 → 停在"PG 只读保持"状态，升级 Go/No-Go 会议（可选前向修复，§7.4 例外）；
+3. **流量切回**：网关 upstream 切回 `<OLD_IMAGE_TAG>`，DNS（TTL ≤ 60s）指回 `<OLD_LB_IP>`，解除维护页；
+4. **恢复 MySQL 写**：`super_read_only = OFF`，旧栈恢复服务；
+5. **ES 处置**：旧索引原地保留 → 无动作；若曾被覆盖 → 从 pre-cutover 快照恢复；
+6. **PG 留存取证**：保持只读 + 访问审计，**不得 DROP/清空**（直到 postmortem 关闭）；
+7. **事后处置**：PG 增量导出评估（§7.3）、对象孤儿清理评估（§7.3）、`monolith-v2` 继续修复（`main` 保持冻结）；
+8. **重试切换**：修复后重跑 G1–G9 全套（不得"只测改动点"），重新走 §5.5 Go/No-Go。
+
+```bash
+# 1) 冻结 PG 写
+ssh <DEPLOY_HOST> '<STOP_COMMAND>'
+PGPASSWORD="$PG_ADMIN_PASSWORD" psql "<PG_ADMIN_DSN>" \
+  -c "ALTER DATABASE <PG_DBNAME> SET default_transaction_read_only = on;"
+PGPASSWORD="$PG_ADMIN_PASSWORD" psql "<PG_ADMIN_DSN>" \
+  -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '<PG_DBNAME>' AND pid <> pg_backend_pid();"
+
+# 3) 流量切回（网关 + DNS；以实际机制为准）
+curl -sS -X PUT "<GATEWAY_ADMIN_URL>/routes/corekg/upstream" \
+  -H "Authorization: Bearer <GATEWAY_ADMIN_TOKEN>" -H 'Content-Type: application/json' \
+  -d '{"upstream":"<OLD_IMAGE_TAG>"}'
+# DNS：对外域名 A 记录指回 <OLD_LB_IP>（TTL 已降，生效 ≤ 5 分钟；以 <DNS_PROVIDER> 实际为准）
+
+# 4) 恢复 MySQL 写
+MYSQL_PWD="$MYSQL_PASSWORD" mysql --host=<MYSQL_HOST> --port=<MYSQL_PORT> --user=<MYSQL_USER> \
+  -e "SET GLOBAL super_read_only = OFF; SELECT @@global.super_read_only AS unfrozen;"
+# 断言：unfrozen == 0，随后 golden-path 对旧栈复跑确认恢复（<OLD_BASE_URL>）。
+
+# 5) ES 快照恢复（仅当索引被覆盖时）
+curl -sS -X POST "<ES_ENDPOINT>/_snapshot/<SNAPSHOT_REPO>/pre-cutover-<DATE>/_restore?wait_for_completion=true" \
+  -u "<ES_USER>:$ES_PASSWORD"
+```
+
+### 6.4 回滚后动作
+
+- 48 小时内 postmortem（§9 表末行），结论进 `<ARTIFACT_DIR>/postmortem-<DATE>.md`；
+- postmortem 关闭前：PG 不删、旧 MySQL/ES/镜像保留期不开始倒计时清理；
+- 对外公告恢复（产品 owner）；
+- 重试窗口由 Go/No-Go 会议重新排期（回到 §9 的 T-7 项——**恢复演练等项不因"刚做过"而免做**，仅可缩短）。
+
+## 7. 数据丢失边界
+
+> **⚠️ 全文最重要的章节：回滚 = 丢数据。签字前必须读完本节。**
+>
+> **切换（T0 放流量）之后被 PostgreSQL 接受的所有业务写入，在回滚时不会自动回到 MySQL——它们会丢失。** 本方案没有反向同步（不存在 PG → MySQL 同步通道，也不做双写，§1.1）；回滚后 PG 上的新数据只能事后人工导出合入，且不保证完整（§7.3）。这不是脚注，是回滚的定价。
+
+### 7.1 边界的精确定义
+
+- **"PG 接受的写入"**：从灰度第一笔流量（§4.1 步骤 7 的 1%）起，到回滚冻结 PG 写（§6.3 步骤 1）止，所有落库的业务数据——新建森林/文件/账号、chat 会话与消息、QA、API Key 与设置变更等**全部写路径**。
+- **零丢失窗口**：§4.1 步骤 2–6 期间（已停写、未放流量）中止/回滚 = MySQL 权威未变、PG 未接流量，**零业务数据丢失**。这是最便宜的回滚窗口，宁可在此窗口内保守中止。
+- **ETL/校验失败后放弃**（步骤 4–5 abort）= 无业务数据丢失：PG 上只有迁移数据，丢弃或 checkpoint 重放即可。
+
+### 7.2 保留 vs 丢失（回滚后）
+
+| 数据 | 回滚后状态 | 说明 |
+|---|---|---|
+| MySQL 侧 T0 前全部数据 | ✅ 保留 | 权威从未离开 MySQL |
+| 对象存储 T0 前已有对象 | ✅ 保留 | 对象层未做任何操作（§1.3） |
+| 备份归档（dump/binlog/ES 快照/PG 基线） | ✅ 保留 | 90 天（§3.5） |
+| 对象存储 T0 后新上传对象 | ⚠️ 物理保留，但成**孤儿** | bucket 不回滚；DB 无对应记录（§7.3） |
+| PG 在 T0 后接受的全部业务写入 | ❌ **丢失** | 无反向同步；人工合入不保证完整（§7.3） |
+| 切换后新建 chat 会话 | ❌ **丢失** | 引用链（消息/文件 id）断裂，部分合入也无法恢复完整性 |
+| 从 PG 重建的 ES 索引内容 | ⚠️ 随回滚失效 | 回滚后以旧索引/pre-cutover 快照为准 |
+| NATS 未消费消息 | 视停写策略 | 冻结前排空（§4.2）则无；否则逐条业务处置 |
+
+### 7.3 孤儿数据与人工合入
+
+- **对象孤儿**：T0 后上传的对象在回滚后 DB 无记录。不影响正确性，只占存储；清理是事后专项（§3.2 的 manifest 与 DB 引用做差集，人工确认后删）。**不阻塞回滚**。
+- **PG-only 行人工合入**（仅当业务明确要求）：`pg_dump --table` 导出 → 逐行 review → 手工写回 MySQL（评估文档 §12.3 第 4 步）。已知限制：id 冲突（MySQL `AUTO_INCREMENT` 未前进，需先对齐）、引用完整性断裂（合入消息不合入其引用的 PG-only 文件 = 断链）。**默认预期是不合入、接受丢失**——这正是需要业务签字的原因。
+- **chat 会话**：即使逐行合入消息，会话与 PG-only 文件的引用关系无法整体恢复；建议整体放弃，除非单表独立可合入。
+
+### 7.4 回滚前置条件（顺序不可换）
+
+1. 冻结 PG 写入（§6.3 步骤 1，先止损失边界）；
+2. 向产品 owner 呈现实际丢失面：按 §7.2 表 + PG 真实写入量统计，例如逐关键表 `SELECT COUNT(*) FROM core.ke_forest WHERE created_at > '<T0_TS>';`（表清单来自 §2 第 6 项 inventory）；
+3. 产品 owner 在 §8.4 签收表签字，三选一：**接受丢失** / **要求尝试人工合入**（拉长 RTO，§7.5）/ **拒绝回滚改为前向修复**；
+4. 之后才执行 §6.3 步骤 3 及以后。
+
+例外：业务选"前向修复"（fix-forward）时不走回滚序列，转入事故响应（§8.3 升级路径），数据保留在 PG 由修复过程处置。
+
+### 7.5 RPO / RTO（占位，切换前由业务与 SRE 填写并签收）
+
+- **目标 RPO = `<RPO>`**：零丢失窗口内回滚 RPO = 0；放流量后回滚 RPO = PG 已接受的全部写入（上界 ≈ 放量时长 × 写入速率）。
+- **目标 RTO = `<RTO>`**：技术序列本身分钟级（停新栈 + 网关/DNS 切回 + MySQL 解只读；DNS 生效 ≤ TTL = 60s）；主要变量是 §7.4 的**决策时间**，因此丢失面呈现材料需在 T-7 准备好模板。
+- 若业务给出"不可接受任何丢失"（RPO = 0 且不接受 §7.4 签字流程）：一次性切换模式不满足该目标，升级架构评审（§1.1），**不得临时拼凑双写**。
+
+## 8. 沟通与责任人
+
+### 8.1 角色与 owner（T-7 前指定，一人一角色，各有备份）
+
+| 角色 | owner | 备份 | 职责 |
+|---|---|---|---|
+| 应用 owner | `<APP_OWNER>` | `<APP_BACKUP>` | ETL 执行、G1/G7/G8 门禁、代码修复决策 |
+| DBA | `<DBA_OWNER>` | `<DBA_BACKUP>` | 备份/binlog/`super_read_only`/setval、G2–G4、PG 冻结与留存 |
+| SRE | `<SRE_OWNER>` | `<SRE_BACKUP>` | 镜像/网关/DNS/灰度/监控、G6/G9、回滚序列执行 |
+| 产品 | `<PRODUCT_OWNER>` | `<PRODUCT_BACKUP>` | 维护公告、数据丢失边界签字、G5/G6 业务验收 |
+
+### 8.2 会议、事故桥与节奏
+
+- **Go/No-Go 会议**：T-1 21:00（§5.5）+ 灰度升档即时决策 + T+1 复盘会；回滚触发时临时召开（硬触发先执行后开会，§6.2）。
+- **事故桥**：`<BRIDGE_URL>`（电话兜底 `<BRIDGE_PHONE>`），T0 全程在线；任何 §6.2 触发即入桥。
+- **节奏**：窗口内每 30 分钟在 `<NOTIFY_CHANNEL>` 发 status（当前步骤号 + 门禁状态 + 下一动作）；异常即时上报不等整点。
+
+### 8.3 升级路径
+
+on-call 值班 → 角色 owner（15 分钟未响应即升级）→ 部门负责人 →（数据正确性事件）CTO。**数据丢失边界签字只能由 `<PRODUCT_OWNER>` 或其书面授权人给出**，其余任何人不得代签。
+
+### 8.4 签收表（模板；空白 = 未签）
+
+| # | 事项 | 签收人 | 时间 | 结果 |
+|---|---|---|---|---|
+| 1 | §2 检查清单无未关闭 blocker | SRE + DBA | | GO / NO-GO |
+| 2 | 备份与归档完成（SHA256 已核） | DBA | | |
+| 3 | 维护窗口与数据丢失边界已向业务说明 | 产品 | | |
+| 4 | GO 决定（切换开始） | 四方 | | |
+| 5 | 灰度 1% → 10% → 100% 每档放行 | SRE | | |
+| 6 | 切换完成（T+1 无回滚） | 四方 | | |
+| 7 | 回滚数据丢失边界确认（仅回滚时） | 产品 | | 接受丢失 / 要求合入 / 前向修复 |
+| 8 | 清理批准（T+7，旧栈下线/归档转入常规流程） | DBA + SRE | | |
+
+## 9. 时间表模板
+
+| 时间 | 事项 | owner | 产出物 | 决策点 |
+|---|---|---|---|---|
+| T-7 | 备份恢复演练（§3.6）；ES snapshot repo 注册 + 快照验证；golden-path 基线复核（**必须已 11/11 绿**）；召回 query 集冻结（§5.2）；角色 owner 指定（§8.1）；`<MAX_WINDOW_HOURS>` 回填 | DBA/SRE/全部 | 演练报告、`recall-queries-<DATE>.jsonl`、owner 表 | 演练失败 → 窗口顺延 |
+| T-1 | `main` 冻结；DNS TTL 降至 ≤ 60s；§2 清单终检；Go/No-Go 会议（§5.5）；维护公告发布；`<ENV_FILE>` 通道验证 | SRE/全部 | 冻结记录、会议纪要、公告链接 | **GO / NO-GO** |
+| T0 | §4 全步骤：停写 → 最终备份 → ETL → 校验 → 新栈 → 灰度 1%/10%/100% → 观察 | 全部 | 门禁产物、每 30 分钟 status 记录 | 每步 abort（§4.1）；触发回滚（§6.2） |
+| T0+1h | 初步稳定性判定 | SRE | 观测报告 | 保持 / 回滚 |
+| T+1 | 观察日：全天监控对比、召回抽检、chat P95 对比；切换完成签收（§8.4 第 6 项）；golden-path 复跑一次 | 全部 | 对比报告、签收表 | **完成签收** |
+| T+7 | 清理：旧 MySQL/ES 归档或下线流程启动（前提：≥ 7 天保留期满且无未决 postmortem）；对象孤儿清理评估（§7.3）；`monolith-v2` 合回 `main`、解冻；本 runbook 复盘修订 | DBA/SRE/应用 | 清理清单、复盘文档 | 清理批准（§8.4 第 8 项） |
+| 若回滚 | 48h 内 postmortem；PG/旧栈保留期冻结（§6.1）；重试窗口决策（回 T-7 项，可缩短不可免做） | 全部 | `postmortem-<DATE>.md` | 重试 / 延期 |
+
+---
+
+### 附：DBA/SRE review 记录（当前未签署）
+
+本文要求在切换前由 DBA 与 SRE 各一名 review 并在下表记录结论。**当前（2026-11-01，Phase 0）本表为空：本文未经 DBA/SRE review，不构成任何"已批准"的声明。** 以下为"待切换前由 DBA/SRE 确认"清单（其缺失不阻塞 Phase 0 交付，但**阻塞切换执行**，即 §2 第 25 项 ⛔）：
+
+DBA 待确认：
+
+1. §3.1 mysqldump 参数（`--single-transaction` 的引擎前提、`--source-data=2` 的版本/权限）与 binlog 位点语句选择（`SHOW BINARY LOG STATUS` vs `SHOW MASTER STATUS`）；
+2. §4.2 `super_read_only` 冻结对业务与复制拓扑的影响；
+3. §6.3 PG 只读冻结方式（`ALTER DATABASE ... default_transaction_read_only` vs 仅停进程）与连接终断的影响面；
+4. ETL sequence 重置是否内嵌（评估文档 §4.2 守卫写法为兜底）；
+5. 备份容量与时长预估、`<DUMP_DIR>` 空间（§2 第 21 项）；
+6. 保留期成本（90 天归档 + 旧栈 ≥ 7 天）；
+7. RPO/RTO 目标值（§7.5）与业务对齐。
+
+SRE 待确认：
+
+1. 网关维护页/只读模式与灰度权重的实际机制（替换本文占位命令）；
+2. DNS TTL 可控性与实际生效时间；
+3. 镜像 digest 记录与 `<OLD_IMAGE_TAG>` 保留策略（§6.1）；
+4. 监控大盘/告警对 §5 G6/G9 指标的覆盖；
+5. NATS 排空的实际命令与超时（§4.2 第 4 步）；
+6. 部署通道（SSH/CI）与回滚部署的实测耗时。
+
+| reviewer | 角色 | 日期 | 结论（approve / changes requested） | 备注（指向当时 commit） |
+|---|---|---|---|---|
+| （空） | DBA | | | |
+| （空） | SRE | | | |
+
+review 记录随 git 历史保留；任何"approve"必须指向评审时的 commit hash，文档修订后需重新评审。
