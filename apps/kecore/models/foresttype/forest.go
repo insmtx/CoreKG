@@ -172,13 +172,13 @@ type KnownowForestFile struct {
 	CoreFileID      uint                    `gorm:"type:bigint;column:file_id;not null;comment:文件id" json:"file_id"`
 	PriviewFileID   uint                    `gorm:"type:bigint;column:priview_file_id;not null;comment:预览文件id" json:"priview_file_id"`
 	PriviewExt      string                  `gorm:"type:varchar(64);column:priview_ext;not null;default:'';comment:预览文件后缀" json:"priview_ext"`
-	IsDir           types.Bool              `gorm:"column:is_dir;type:tinyint(1);not null;default:-1" json:"is_dir"`
+	IsDir           types.Bool              `gorm:"column:is_dir;type:smallint;not null;default:-1" json:"is_dir"`
 	ParentID        uint                    `gorm:"type:int;column:parent_id;not null;comment:知识森林id" json:"parent_id"`
 	Name            string                  `gorm:"type:varchar(255);column:name;not null;comment:名称" json:"name"`
 	Size            int64                   `gorm:"type:bigint;column:size;not null;comment:文件大小" json:"size"`
 	Ext             string                  `gorm:"type:varchar(64);column:ext;not null;comment:文件后缀" json:"ext"`
 	ParentIDs       string                  `gorm:"type:varchar(255);column:parent_ids;not null;comment:parent_ids" json:"parent_ids"`
-	Depth           int                     `gorm:"type:tinyint;column:depth;not null;comment:深度" json:"depth"`
+	Depth           int                     `gorm:"type:smallint;column:depth;not null;comment:深度" json:"depth"`
 	ParseStatus     KnownowForestTaskStatus `gorm:"type:varchar(64);column:parse_status;not null;default:pending;comment:md解析状态" json:"parse_status"`
 	MindmapStatus   KnownowForestTaskStatus `gorm:"type:varchar(64);column:mindmap_status;not null;default:pending;comment:思维导图状态" json:"mindmap_status"`
 	AnalysisStatus  KnownowForestTaskStatus `gorm:"type:varchar(64);column:analysis_status;not null;default:pending;comment:智能分析状态" json:"analysis_status"`
@@ -186,7 +186,7 @@ type KnownowForestFile struct {
 	GraphStatus     KnownowForestTaskStatus `gorm:"type:varchar(64);column:graph_status;not null;default:pending;comment:知识图谱状态" json:"graph_status"`
 	DescStatus      KnownowForestTaskStatus `gorm:"type:varchar(64);column:desc_status;not null;default:pending;comment:文件描述状态" json:"desc_status"`
 	PreViewAble     PreViewAbleStatus       `gorm:"type:varchar(64);column:preview_able;default:accept;comment:文件是否可预览" json:"preview_able"`
-	Enable          types.Bool              `gorm:"type:tinyint(1);column:enable;default:1;comment:是否启用" json:"enable"`
+	Enable          types.Bool              `gorm:"type:smallint;column:enable;default:1;comment:是否启用" json:"enable"`
 
 	// Status 文件状态
 	Status FileStatus `gorm:"column:status;type:varchar(15);default:'normal'" json:"status"`
@@ -405,4 +405,3 @@ type KnownowForestPublicScope struct {
 func (KnownowForestPublicScope) TableName() string {
 	return TableNameKnownowForestPublicScope
 }
-

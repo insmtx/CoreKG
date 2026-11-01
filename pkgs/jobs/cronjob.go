@@ -43,13 +43,13 @@ type CronJob struct {
 	// CronStr 定时表达式 * * * * * (分 时 日 月 周)
 	CronStr string `gorm:"column:cron_str;size:32;not null" json:"cron_str"`
 	// IsEnabled 是否启用
-	IsEnabled types.Bool `gorm:"column:is_enabled;type:tinyint(1);not null;default:1" json:"is_enabled"`
+	IsEnabled types.Bool `gorm:"column:is_enabled;type:smallint;not null;default:1" json:"is_enabled"`
 
 	// NextRunTime 下次运行时间
-	NextRunTime time.Time `gorm:"column:next_run_time;type:datetime" json:"next_run_time"`
+	NextRunTime time.Time `gorm:"column:next_run_time;type:timestamptz" json:"next_run_time"`
 
 	// LastRunTime 上次运行时间
-	LastRunTime time.Time `gorm:"column:last_run_time;type:datetime" json:"last_run_time"`
+	LastRunTime time.Time `gorm:"column:last_run_time;type:timestamptz" json:"last_run_time"`
 	// LastRunStatus 上次运行状态
 	LastRunStatus string `gorm:"column:last_run_status;size:8" json:"last_run_status"`
 	// LastRunError 上次运行错误
@@ -77,11 +77,11 @@ type CronJobRecord struct {
 	// CronJobID 定时任务ID
 	CronJobID uint `gorm:"column:cron_job_id;not null;uniqueIndex:idx_cjid_runtime" json:"cron_job_id"`
 	// RunTime 运行时间
-	RunTime time.Time `gorm:"column:run_time;type:datetime;not null;uniqueIndex:idx_cjid_runtime" json:"run_time"`
+	RunTime time.Time `gorm:"column:run_time;type:timestamptz;not null;uniqueIndex:idx_cjid_runtime" json:"run_time"`
 	// RunnerName 执行者名称
 	RunnerName string `gorm:"column:runner_name;size:32;not null" json:"runner_name"`
 	// StartAt 开始时间
-	StartAt time.Time `gorm:"column:start_at;type:datetime;not null" json:"start_at"`
+	StartAt time.Time `gorm:"column:start_at;type:timestamptz;not null" json:"start_at"`
 	// Status 状态
 	Status string `gorm:"column:status;size:16;not null" json:"status"`
 	// Error 错误

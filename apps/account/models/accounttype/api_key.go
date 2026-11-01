@@ -49,7 +49,7 @@ type APIKey struct {
 	// Status 状态
 	Status AccessKeyStatus `gorm:"column:status;type:varchar(11);not null;default:'normal'" json:"status"`
 	// ExpiredAt 过期时间
-	ExpiredAt *time.Time `gorm:"column:expired_at;type:datetime;comment:过期时间" json:"expired_at"`
+	ExpiredAt *time.Time `gorm:"column:expired_at;type:timestamptz;comment:过期时间" json:"expired_at"`
 }
 
 type APIKeyList []APIKey

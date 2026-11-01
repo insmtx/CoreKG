@@ -20,7 +20,7 @@ type ChatRecentUsedModel struct {
 	Uin        uint       `gorm:"column:uin;type:bigint;not null;;comment:用户ID"`
 	CompanyID  uint       `gorm:"column:company_id;type:bigint;not null;default 0;comment:公司ID"`
 	ModelID    uint       `gorm:"column:model_id;type:bigint;not null;;comment:模型ID，对应 chat_model.id"`
-	LastUsedAt *time.Time `gorm:"column:last_used_at;type:datetime(3);not null;;comment:最近使用时间"`
+	LastUsedAt *time.Time `gorm:"column:last_used_at;type:timestamptz;not null;;comment:最近使用时间"`
 	UsageCount uint       `gorm:"column:usage_count;type:int;not null;default 1;comment:使用次数"`
 }
 

@@ -36,10 +36,10 @@ var (
 type KeResourceScope struct {
 	gorm.Model
 	ResourceType ResourceType `gorm:"column:resource_type;type:varchar(24);not null;default:'';comment:资源类型" json:"resource_type"`
-	ResourceID   uint         `gorm:"column:resource_id;type:bigint unsigned;not null;default:0;comment:资源ID" json:"resource_id"`
+	ResourceID   uint         `gorm:"column:resource_id;type:bigint;not null;default:0;comment:资源ID" json:"resource_id"`
 	ScopeType    ScopeType    `gorm:"column:scope_type;type:varchar(24);not null;default:'';comment:作用域类型" json:"scope_type"`
 
-	ScopeID uint       `gorm:"column:scope_id;type:bigint unsigned;not null;default:0;comment:作用域对象ID" json:"scope_id"`
+	ScopeID uint       `gorm:"column:scope_id;type:bigint;not null;default:0;comment:作用域对象ID" json:"scope_id"`
 	Action  ActionType `gorm:"column:action;type:varchar(24);not null;default:'';comment:操作类型" json:"action"`
 }
 

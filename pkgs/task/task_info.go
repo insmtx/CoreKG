@@ -34,26 +34,26 @@ type Task struct {
 	// TaskType
 	TaskType string `gorm:"type:varchar(32);column:task_type;not null;comment:task type" json:"task_type"`
 	// Priority 优先级
-	Priority int `gorm:"type:tinyint;column:priority;not null;comment:task priority" json:"priority"`
+	Priority int `gorm:"type:smallint;column:priority;not null;comment:task priority" json:"priority"`
 	// TaskStatus 任务状态
 	TaskStatus TaskStatus `gorm:"type:varchar(12);column:task_status;not null;comment:task status" json:"task_status"`
 	// Redo 重试次数
 	Redo int `gorm:"type:int;column:redo;not null;comment:redo times for parsing" json:"redo"`
 	// ErrMsg 错误信息
-	ErrMsg string `gorm:"type:longtext;column:err_msg;comment:error message" json:"err_msg"`
+	ErrMsg string `gorm:"type:text;column:err_msg;comment:error message" json:"err_msg"`
 	// Comment 任务备注
 	Comment string `gorm:"type:varchar(255);column:comment;comment:comment for parse task" json:"comment"`
 
 	// WorkerID 任务执行者ID
 	WorkerID string `gorm:"type:varchar(255);column:worker_id;comment:worker id" json:"worker_id"`
 	// StartAt 任务开始时间
-	StartAt *time.Time `gorm:"type:datetime;column:start_at;comment:task start time" json:"start_at"`
+	StartAt *time.Time `gorm:"type:timestamptz;column:start_at;comment:task start time" json:"start_at"`
 	// EndAt 任务结束时间
-	EndAt *time.Time `gorm:"type:datetime;column:end_at;comment:task end time" json:"end_at"`
+	EndAt *time.Time `gorm:"type:timestamptz;column:end_at;comment:task end time" json:"end_at"`
 	// Cost 耗时
 	Cost int64 `gorm:"type:int;column:cost;comment:task cost" json:"cost"`
 	// Payload 任务数据
-	Payload string `gorm:"type:longtext;column:payload;comment:task payload" json:"payload"`
+	Payload string `gorm:"type:text;column:payload;comment:task payload" json:"payload"`
 	// Result 任务结果
 	Result string `gorm:"type:text;column:result;comment:task result" json:"result"`
 	// AppGroup 任务分组

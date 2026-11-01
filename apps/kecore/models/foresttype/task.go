@@ -36,7 +36,7 @@ type KnownowTask struct {
 	// TaskType 任务类型 parse:文件解析 mind_map:思维导图 analysis:智能分析
 	TaskType TaskType `gorm:"type:varchar(12);column:task_type;not null;comment:task type" json:"task_type"`
 	// Priority 优先级
-	Priority int `gorm:"type:tinyint;column:priority;not null;comment:task priority" json:"priority"`
+	Priority int `gorm:"type:smallint;column:priority;not null;comment:task priority" json:"priority"`
 	// Path 文件相对路径
 	Path string `gorm:"type:varchar(255);column:path;not null;comment:source file relative path" json:"path"`
 	// TaskStatus 任务状态
@@ -51,9 +51,9 @@ type KnownowTask struct {
 	Comment string `gorm:"type:varchar(255);column:comment;comment:comment for parse task" json:"comment"`
 
 	// StartAt 任务开始时间
-	StartAt *time.Time `gorm:"type:datetime;column:start_at;comment:task start time" json:"start_at"`
+	StartAt *time.Time `gorm:"type:timestamptz;column:start_at;comment:task start time" json:"start_at"`
 	// EndAt 任务结束时间
-	EndAt *time.Time `gorm:"type:datetime;column:end_at;comment:task end time" json:"end_at"`
+	EndAt *time.Time `gorm:"type:timestamptz;column:end_at;comment:task end time" json:"end_at"`
 	// Cost 耗时
 	Cost int64 `gorm:"type:int;column:cost;comment:task cost" json:"cost"`
 }

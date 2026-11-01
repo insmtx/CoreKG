@@ -33,7 +33,7 @@ type GraphTag struct {
 	GraphVersionID uint       `gorm:"column:graph_version_id;type:bigint;not null;default:0;comment:'图谱版本ID';index" json:"graph_version_id"`
 	TagName        string     `gorm:"column:tag_name;type:varchar(256);not null;default:'';comment:'标签名称';index" json:"tag_name"`
 	TagType        TagType    `gorm:"column:tag_type;type:varchar(16);not null;default:0;comment:'标签类型 tag;edge';index" json:"tag_type"`
-	Properties     Properties `gorm:"column:properties;type:mediumtext;comment:'标签属性'" json:"properties"`
+	Properties     Properties `gorm:"column:properties;type:text;comment:'标签属性'" json:"properties"`
 	TagStatus      TagStatus  `gorm:"column:tag_status;type:varchar(16);not null;default:'not_synced';comment:'标签状态'" json:"tag_status"`
 }
 

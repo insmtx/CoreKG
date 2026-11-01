@@ -26,11 +26,11 @@ type KnownowFileParse struct {
 	MD5 string `gorm:"type:varchar(255);column:md5;not null;comment:check whether source file was touched;uniqueIndex:id_forest_path_md5_index" json:"md5"`
 
 	//文件解析
-	Content string `gorm:"type:longtext;column:content;comment:parsed content" json:"content"`
+	Content string `gorm:"type:text;column:content;comment:parsed content" json:"content"`
 	//思维导图
-	MindMap string `gorm:"type:longtext;column:mind_map;comment:mind_map content" json:"mind_map"`
+	MindMap string `gorm:"type:text;column:mind_map;comment:mind_map content" json:"mind_map"`
 	//智能分析
-	Analysis string `gorm:"type:longtext;column:analysis;comment:analysis content" json:"analysis"`
+	Analysis string `gorm:"type:text;column:analysis;comment:analysis content" json:"analysis"`
 
 	//解析状态
 	Status ParseStatusType `gorm:"type:varchar(30);column:status;not null;comment:parse status of forest" json:"status"`

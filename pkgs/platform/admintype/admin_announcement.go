@@ -14,7 +14,7 @@ type AdminAnnouncement struct {
 	CompanyID uint   `gorm:"column:company_id;type:bigint;not null;default 0;comment:公司ID"`
 	Creator   string `gorm:"column:creator;type:varchar(511);not null;;comment:创建人昵称"`
 	Tag       string `gorm:"column:tag;type:varchar(127);not null;;comment:版本tag"`
-	Content   string `gorm:"column:content;type:longtext;;comment:公告内容"`
+	Content   string `gorm:"column:content;type:text;;comment:公告内容"`
 }
 
 type AdminAnnouncementList []AdminAnnouncement

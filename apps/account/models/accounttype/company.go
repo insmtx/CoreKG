@@ -116,11 +116,11 @@ type CompanyInvitation struct {
 	// Issuer 签发公司
 	Issuer string `gorm:"type:varchar(30);not null;index" json:"issuer"`
 	// Count 邀请次数
-	Count uint `gorm:"type:uint;column:count;default:1" json:"count"`
+	Count uint `gorm:"type:bigint;column:count;default:1" json:"count"`
 	// Expired 过期时间
-	Expired time.Time `gorm:"type:datetime;column:expired;not null" json:"expired"`
+	Expired time.Time `gorm:"type:timestamptz;column:expired;not null" json:"expired"`
 	// CompanyID 公司ID
-	CompanyID uint `gorm:"type:uint;column:company_id;not null;index" json:"company_id"`
+	CompanyID uint `gorm:"type:bigint;column:company_id;not null;index" json:"company_id"`
 	// Key 邀请码
 	Key string `gorm:"type:varchar(255);not null;uniqueIndex" json:"key"`
 	// AlreadyBind 是否已被使用
@@ -130,7 +130,7 @@ type CompanyInvitation struct {
 	//PermSet
 	PermSet *perm.Set `gorm:"type:text;column:perm_set" json:"perm_set"`
 	//Uin
-	Uin uint `gorm:"type:uint;column:uin" json:"uin"`
+	Uin uint `gorm:"type:bigint;column:uin" json:"uin"`
 	//DepartmentIDs
 	DepartmentIDs types.UintArray `gorm:"type:varchar(255);column:department_ids;comment:'部门id列表'"`
 }

@@ -11,7 +11,7 @@ type CozeModelInstance struct {
 	CreatedAt   int64             `gorm:"column:created_at;not null;autoCreateTime:milli;comment:Create Time in Milliseconds" json:"created_at"` // Create Time in Milliseconds
 	UpdatedAt   int64             `gorm:"column:updated_at;not null;autoUpdateTime:milli;comment:Update Time in Milliseconds" json:"updated_at"` // Update Time in Milliseconds
 	DeletedAt   gorm.DeletedAt    `gorm:"column:deleted_at;comment:Delete Time" json:"deleted_at"`
-	Type        int8              `gorm:"column:type;type:tinyint;not null;comment:Model Type 0-LLM 1-TextEmbedding 2-Rerank" json:"type"`
+	Type        int8              `gorm:"column:type;type:smallint;not null;comment:Model Type 0-LLM 1-TextEmbedding 2-Rerank" json:"type"`
 	Provider    *ModelProvider    `gorm:"column:provider;not null;serializer:json;comment:Provider Information" json:"provider"`
 	DisplayInfo *DisplayInfo      `gorm:"column:display_info;not null;serializer:json;comment:Display Information" json:"display_info"`
 	Connection  *Connection       `gorm:"column:connection;not null;serializer:json;comment:Connection Information" json:"connection"`

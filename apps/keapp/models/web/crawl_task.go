@@ -8,10 +8,11 @@ import (
 	"github.com/ygpkg/yg-go/logs"
 	"gorm.io/gorm"
 )
+
 type KeCrawlTask struct {
-	ID           uint            `gorm:"column:id;type:bigint unsigned;primaryKey;autoIncrement" json:"id"`
-	AppID        uint            `gorm:"column:app_id;type:bigint unsigned;not null;default:0;index:idx_crawl_task_app" json:"app_id"`
-	ResourceID   *uint           `gorm:"column:resource_id;type:bigint unsigned" json:"resource_id"`
+	ID           uint            `gorm:"column:id;type:bigint;primaryKey;autoIncrement" json:"id"`
+	AppID        uint            `gorm:"column:app_id;type:bigint;not null;default:0;index:idx_crawl_task_app" json:"app_id"`
+	ResourceID   *uint           `gorm:"column:resource_id;type:bigint" json:"resource_id"`
 	SourceURL    string          `gorm:"column:source_url;type:varchar(2048);not null;default:''" json:"source_url"`
 	TaskType     CrawlTaskType   `gorm:"column:task_type;type:varchar(32);not null;default:'full'" json:"task_type"`
 	Status       CrawlTaskStatus `gorm:"column:status;type:varchar(32);not null;default:'pending';index:idx_crawl_task_status" json:"status"`
@@ -21,11 +22,11 @@ type KeCrawlTask struct {
 	PagesNew     int             `gorm:"column:pages_new;type:int;not null;default:0" json:"pages_new"`
 	PagesUpdated int             `gorm:"column:pages_updated;type:int;not null;default:0" json:"pages_updated"`
 	PagesSkipped int             `gorm:"column:pages_skipped;type:int;not null;default:0" json:"pages_skipped"`
-	StartedAt    *time.Time      `gorm:"column:started_at;type:datetime(3)" json:"started_at"`
-	FinishedAt   *time.Time      `gorm:"column:finished_at;type:datetime(3)" json:"finished_at"`
-	CreatedBy    uint            `gorm:"column:created_by;type:bigint unsigned;not null;default:0" json:"created_by"`
-	CreatedAt    time.Time       `gorm:"column:created_at;type:datetime(3);not null;default:CURRENT_TIMESTAMP(3)" json:"created_at"`
-	UpdatedAt    time.Time       `gorm:"column:updated_at;type:datetime(3);not null;default:CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)" json:"updated_at"`
+	StartedAt    *time.Time      `gorm:"column:started_at;type:timestamptz" json:"started_at"`
+	FinishedAt   *time.Time      `gorm:"column:finished_at;type:timestamptz" json:"finished_at"`
+	CreatedBy    uint            `gorm:"column:created_by;type:bigint;not null;default:0" json:"created_by"`
+	CreatedAt    time.Time       `gorm:"column:created_at;type:timestamptz;not null;default:CURRENT_TIMESTAMP(3)" json:"created_at"`
+	UpdatedAt    time.Time       `gorm:"column:updated_at;type:timestamptz;not null;default:CURRENT_TIMESTAMP(3)" json:"updated_at"`
 }
 
 func (KeCrawlTask) TableName() string { return TableNameKeCrawlTask }

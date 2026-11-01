@@ -68,7 +68,7 @@ type RelDeptUser struct {
 
 	Order uint32 `json:"order" gorm:"column:order"`
 	// IsLeader 在所在的部门内是否为上级
-	IsLeader types.Bool `json:"is_leader" gorm:"column:is_leader;type:TINYINT"`
+	IsLeader types.Bool `json:"is_leader" gorm:"column:is_leader;type:smallint"`
 }
 
 func (*RelDeptUser) TableName() string { return TableNameRelDeptUser }

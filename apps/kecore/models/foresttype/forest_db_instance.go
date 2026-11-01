@@ -48,7 +48,7 @@ type ForestDBInstance struct {
 	CompanyID        uint                       `gorm:"column:company_id;type:bigint;not null;default:0;comment:'公司ID';index" json:"company_id"`
 	ConnectMode      DBInstanceConnectMode      `gorm:"column:connect_mode;type:varchar(32);not null;;comment:连接模式，standard：标准连接，ssh：ssh隧道模式"`
 	ConnectName      string                     `gorm:"column:connect_name;type:varchar(128);not null;;comment:数据库连接名称"`
-	ForestID         uint                       `gorm:"column:forest_id;type:bigint unsigned;not null;default 0;comment:知识库ID"`
+	ForestID         uint                       `gorm:"column:forest_id;type:bigint;not null;default 0;comment:知识库ID"`
 	Host             string                     `gorm:"column:host;type:varchar(255);not null;;comment:数据库地址"`
 	InstanceType     dbplugins.DatabaseType     `gorm:"column:instance_type;type:varchar(32);not null;;comment:数据库类型，oracle：oracle，mysql：mysql"`
 	OwnershipType    DBInstanceOwnershipType    `gorm:"column:ownership_type;type:varchar(32);not null;;comment:实例归属类型：system-系统自有，external-外部实例"`
@@ -57,7 +57,7 @@ type ForestDBInstance struct {
 	Port             uint                       `gorm:"column:port;type:int;not null;default 0;comment:端口号"`
 	Database         string                     `gorm:"column:database;type:varchar(128);not null;default '';comment:数据库名称"`
 	ConnectionStatus DBInstanceConnectionStatus `gorm:"column:connection_status;type:varchar(32);not null;default 'valid';comment:连接状态,valid-有效，invalid-无效"`
-	Uin              uint                       `gorm:"column:uin;type:bigint unsigned;not null;default 0;comment:用户uin"`
+	Uin              uint                       `gorm:"column:uin;type:bigint;not null;default 0;comment:用户uin"`
 }
 
 type ForestDbInstanceList []ForestDBInstance

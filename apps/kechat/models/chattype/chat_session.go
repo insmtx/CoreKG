@@ -77,17 +77,17 @@ type ChatSession struct {
 	// Input 输入参数
 	Input InputList `gorm:"column:input;type:json;comment:'输入参数'" json:"input"`
 	// IsTop 是否置顶
-	IsTop types.Bool `gorm:"column:is_top;type:tinyint;not null;default:-1;comment:'是否置顶'" json:"is_top"`
+	IsTop types.Bool `gorm:"column:is_top;type:smallint;not null;default:-1;comment:'是否置顶'" json:"is_top"`
 	// 关联文件id
 	FileID uint `gorm:"type:int;column:file_id;not null;default:0;comment:file_id" json:"file_id"`
 	// 关联多文件id
-	FileIDList types.UintArray `gorm:"column:file_id_list;type:longtext;comment:'文件ID列表'" json:"file_id_list"`
+	FileIDList types.UintArray `gorm:"column:file_id_list;type:text;comment:'文件ID列表'" json:"file_id_list"`
 	// 关联多库id
-	ForestIDList     types.UintArray   `gorm:"column:forest_id_list;type:longtext;comment:'森林ID列表'" json:"forest_id_list"`
-	ExcelIDList      types.UintArray   `gorm:"column:excel_id_list;type:longtext;comment:'excelIDList'" json:"excel_id_list"`
-	ExcelSheetIDList types.UintArray   `gorm:"column:excel_sheet_id_list;type:longtext;comment:'excelSheetIDList'" json:"excel_sheet_id_list"`
-	DBList           types.StringArray `gorm:"column:db_list;type:longtext;comment:'数据库名称列表'" json:"db_list"`
-	DBTableList      types.StringArray `gorm:"column:db_table_list;type:longtext;comment:'数据表名称列表'" json:"db_table_list"`
+	ForestIDList     types.UintArray   `gorm:"column:forest_id_list;type:text;comment:'森林ID列表'" json:"forest_id_list"`
+	ExcelIDList      types.UintArray   `gorm:"column:excel_id_list;type:text;comment:'excelIDList'" json:"excel_id_list"`
+	ExcelSheetIDList types.UintArray   `gorm:"column:excel_sheet_id_list;type:text;comment:'excelSheetIDList'" json:"excel_sheet_id_list"`
+	DBList           types.StringArray `gorm:"column:db_list;type:text;comment:'数据库名称列表'" json:"db_list"`
+	DBTableList      types.StringArray `gorm:"column:db_table_list;type:text;comment:'数据表名称列表'" json:"db_table_list"`
 	// es索引
 	EsIndex string `gorm:"column:es_index;type:varchar(255);default:'ke_0';comment:'es索引'" json:"es_index"`
 	// external id
@@ -95,7 +95,7 @@ type ChatSession struct {
 
 	SubjectID uint `gorm:"column:subject_id;type:bigint;not null;default:0;comment:'主体id';index" json:"subject_id"`
 
-	ExternalTokenIDList types.UintArray `gorm:"column:external_token_id_list;type:longtext;comment:'外部数据源id'" json:"external_token_id_list"`
+	ExternalTokenIDList types.UintArray `gorm:"column:external_token_id_list;type:text;comment:'外部数据源id'" json:"external_token_id_list"`
 
 	PromptMode string `gorm:"column:prompt_mode;type:varchar(32);default:'';comment:'prompt模式'" json:"prompt_mode"`
 }

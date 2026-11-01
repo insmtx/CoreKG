@@ -17,7 +17,7 @@ type APIAuthorization struct {
 	// Status 状态
 	Status APIStatus `gorm:"column:status;type:varchar(20);not null;default:'normal'" json:"status"`
 	// ExpiredAt 过期时间
-	ExpiredAt *time.Time `gorm:"column:expired_at;type:datetime;comment:过期时间" json:"expired_at"`
+	ExpiredAt *time.Time `gorm:"column:expired_at;type:timestamptz;comment:过期时间" json:"expired_at"`
 }
 
 // TableName 表名

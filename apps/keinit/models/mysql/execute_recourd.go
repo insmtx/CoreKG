@@ -19,8 +19,8 @@ type InitExecRecourd struct {
 	ExecBatch string `gorm:"column:exec_batch;type:varchar(255);not null;comment:执行批次"`
 	FileName  string `gorm:"column:file_name;type:varchar(255);not null;comment:文件名"`
 	// FileHash     string     `gorm:"column:file_hash;type:varchar(255);not null;comment:文件hash"`
-	StartTime    time.Time  `gorm:"column:start_time;type:datetime;not null;comment:开始时间"`
-	EndTime      time.Time  `gorm:"column:end_time;type:datetime;not null;comment:结束时间"`
+	StartTime    time.Time  `gorm:"column:start_time;type:timestamptz;not null;comment:开始时间"`
+	EndTime      time.Time  `gorm:"column:end_time;type:timestamptz;not null;comment:结束时间"`
 	ExecTime     float64    `gorm:"column:exec_time;type:float;not null;comment:执行时间"`
 	ErrorMessage string     `gorm:"column:error_message;type:varchar(4096);not null;comment:错误信息"`
 	FailLineAt   int        `gorm:"column:fail_line_at;type:int;not null;comment:失败行号"`

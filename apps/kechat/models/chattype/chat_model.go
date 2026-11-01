@@ -33,7 +33,7 @@ type ChatModel struct {
 	// CozeModelID 对应 coze model_instance 表的 ID
 	CozeModelID uint `gorm:"column:coze_model_id;type:bigint;not null;default:0;comment:'对应coze model_instance id';index" json:"coze_model_id"`
 	// Priority 优先级，值越大优先级越高
-	Priority uint `gorm:"column:priority;type:tinyint;not null;default:0;comment:'优先级，值越大优先级越高'" json:"priority"`
+	Priority uint `gorm:"column:priority;type:smallint;not null;default:0;comment:'优先级，值越大优先级越高'" json:"priority"`
 	// ModelName 模型名称
 	ModelName string `gorm:"column:model_name;type:varchar(64);not null;comment:'模型名称'" json:"model_name"`
 	// ModelUrl 模型URL

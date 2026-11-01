@@ -41,7 +41,7 @@ type License struct {
 	Subject    string          `gorm:"column:subject;type:varchar(255);comment:签发主体" json:"subject"`
 	Env        license.EnvType `gorm:"column:env;type:varchar(127);comment:环境类型" json:"env"`
 	UID        string          `gorm:"column:uid;type:varchar(255);comment:主体环境UID" json:"uid"`
-	ExpiredAt  *time.Time      `gorm:"column:expired_at;type:datetime;comment:license到期时间" json:"expired_at"`
+	ExpiredAt  *time.Time      `gorm:"column:expired_at;type:timestamptz;comment:license到期时间" json:"expired_at"`
 	Issuer     string          `gorm:"column:issuer;type:varchar(255);comment:签发人" json:"issuer"`
 	Serial     string          `gorm:"column:serial;type:varchar(255);comment:License序列号" json:"serial"`
 	Meta       Meta            `gorm:"column:meta;type:varchar(1023);comment:license元信息;serializer:json" json:"meta"`

@@ -33,7 +33,7 @@ type ExternalToken struct {
 	ExternalID   string     `gorm:"type:varchar(100);not null;comment:第三方平台用户ID" json:"external_id"`
 	AccessToken  string     `gorm:"type:text;not null;comment:加密存储的 access_token" json:"access_token"`
 	RefreshToken string     `gorm:"type:text;comment:加密存储的 refresh_token" json:"refresh_token"`
-	ExpiresAt    *time.Time `gorm:"type:datetime(3);comment:access_token 过期时间" json:"expires_at"`
+	ExpiresAt    *time.Time `gorm:"type:timestamptz;comment:access_token 过期时间" json:"expires_at"`
 	Status       int8       `gorm:"not null;default:1;comment:绑定状态: 1=绑定 0=解绑/失效" json:"status"`
 	Email        string     `gorm:"type:varchar(255);comment:第三方平台邮箱" json:"email"`
 	Avatar       string     `gorm:"type:varchar(500);comment:第三方平台头像 URL" json:"avatar"`

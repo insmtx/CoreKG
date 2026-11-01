@@ -7,8 +7,8 @@ import (
 // KeCompanyDB 公司数据库表结构体
 type KeCompanyDB struct {
 	gorm.Model
-	CompanyID    uint   `gorm:"column:company_id;type:bigint unsigned;not null;default 0;comment:公司ID"`
-	DBInstanceID uint   `gorm:"column:db_instance_id;type:bigint unsigned;not null;default 0;comment:数据库实例ID"`
+	CompanyID    uint   `gorm:"column:company_id;type:bigint;not null;default 0;comment:公司ID"`
+	DBInstanceID uint   `gorm:"column:db_instance_id;type:bigint;not null;default 0;comment:数据库实例ID"`
 	DBName       string `gorm:"column:db_name;type:varchar(255);not null;;comment:数据库名"`
 }
 

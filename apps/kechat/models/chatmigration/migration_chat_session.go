@@ -36,15 +36,15 @@ type ChatQuestion struct {
 
 	// 聊天信息
 	// Question 问题
-	Question string `gorm:"column:question;type:mediumtext;comment:'问题'" json:"question"`
+	Question string `gorm:"column:question;type:text;comment:'问题'" json:"question"`
 	// 推理 reasoning
-	Reasoning string `gorm:"column:reasoning;type:mediumtext;comment:'推理'" json:"reasoning"`
+	Reasoning string `gorm:"column:reasoning;type:text;comment:'推理'" json:"reasoning"`
 	// 推理耗时
-	ReasoningSeconds int `gorm:"column:reasoning_seconds;type:int(11);not null;default:0;comment:'推理耗时'" json:"reasoning_seconds"`
+	ReasoningSeconds int `gorm:"column:reasoning_seconds;type:integer;not null;default:0;comment:'推理耗时'" json:"reasoning_seconds"`
 	// Answer 回答
 	Answer string `gorm:"column:answer;type:text;comment:'回答'" json:"answer"`
 	// CostSeconds 耗时
-	CostSeconds int `gorm:"column:cost_seconds;type:int(11);not null;default:0;comment:'耗时'" json:"cost_seconds"`
+	CostSeconds int `gorm:"column:cost_seconds;type:integer;not null;default:0;comment:'耗时'" json:"cost_seconds"`
 	// Status 状态
 	Status chattype.QuestionStatus `gorm:"column:status;type:varchar(8);not null;default:'pending';comment:'状态'" json:"status"`
 	// ModelName 模型名称
@@ -58,14 +58,14 @@ type ChatQuestion struct {
 	CacheHitToken  int `gorm:"column:cache_hit_token;type:int;not null;default:0;comment:'缓存命中token';index:cache_hit_token" json:"cache_hit_token"`
 	CacheMissToken int `gorm:"column:cache_miss_token;type:int;not null;default:0;comment:'缓存未命中token';index:cache_miss_token" json:"cache_miss_token"`
 	// IsCharged 是否完成收费
-	IsCharged bool `gorm:"type:tinyint;not null" json:"is_charged"`
+	IsCharged bool `gorm:"type:smallint;not null" json:"is_charged"`
 
 	// AnswerStars 用户对回答的打分
 	AnswerStars int `gorm:"column:answer_stars;type:int;not null;default:0;comment:'回答星星';index:answer_stars" json:"answer_stars"`
 
 	ImageUrlList       types.StringArray           `gorm:"column:image_url_list;type:text;comment:'图片列表'" json:"image_url_list"`
-	QueryReferenceList chattype.QueryReferenceList `gorm:"column:query_reference_list;type:mediumtext;comment:'引用内容列表';serializer:json" json:"query_reference_list"`
-	ChatReferenceList  chattype.QueryReferenceList `gorm:"column:chat_reference_list;type:mediumtext;comment:'引用内容列表';serializer:json" json:"chat_reference_list"`
+	QueryReferenceList chattype.QueryReferenceList `gorm:"column:query_reference_list;type:text;comment:'引用内容列表';serializer:json" json:"query_reference_list"`
+	ChatReferenceList  chattype.QueryReferenceList `gorm:"column:chat_reference_list;type:text;comment:'引用内容列表';serializer:json" json:"chat_reference_list"`
 
 	ExternalID string `gorm:"column:external_id;type:varchar(127);comment:'外部调用标识'" json:"external_id"`
 }

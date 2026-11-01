@@ -12,8 +12,8 @@ import (
 
 type KeWebResource struct {
 	gorm.Model
-	AppID        uint            `gorm:"column:app_id;type:bigint unsigned;not null;default:0;index:idx_web_res_app" json:"app_id"`
-	CompanyID    uint            `gorm:"column:company_id;type:bigint unsigned;not null;default:0;index:idx_web_res_company" json:"company_id"`
+	AppID        uint            `gorm:"column:app_id;type:bigint;not null;default:0;index:idx_web_res_app" json:"app_id"`
+	CompanyID    uint            `gorm:"column:company_id;type:bigint;not null;default:0;index:idx_web_res_company" json:"company_id"`
 	SourceURL    string          `gorm:"column:source_url;type:varchar(2048);not null;default:''" json:"source_url"`
 	Title        string          `gorm:"column:title;type:varchar(512);not null;default:''" json:"title"`
 	ResourceType string          `gorm:"column:resource_type;type:varchar(32);not null;default:'web'" json:"resource_type"`
@@ -22,13 +22,13 @@ type KeWebResource struct {
 	LastModified string          `gorm:"column:last_modified;type:varchar(64);not null;default:''" json:"last_modified"`
 	Manifest     json.RawMessage `gorm:"column:manifest;type:json" json:"manifest"`
 	IndexStatus  IndexStatus     `gorm:"column:index_status;type:varchar(32);not null;default:'pending';index:idx_web_res_status" json:"index_status"`
-	IndexedAt    *time.Time      `gorm:"column:indexed_at;type:datetime(3)" json:"indexed_at"`
+	IndexedAt    *time.Time      `gorm:"column:indexed_at;type:timestamptz" json:"indexed_at"`
 	CrawlCount   int             `gorm:"column:crawl_count;type:int;not null;default:0" json:"crawl_count"`
-	LastCrawlAt  *time.Time      `gorm:"column:last_crawl_at;type:datetime(3)" json:"last_crawl_at"`
+	LastCrawlAt  *time.Time      `gorm:"column:last_crawl_at;type:timestamptz" json:"last_crawl_at"`
 	CrawlError   string          `gorm:"column:crawl_error;type:text" json:"crawl_error"`
 	Metadata     json.RawMessage `gorm:"column:metadata;type:json" json:"metadata"`
-	ForestFileID *uint           `gorm:"column:forest_file_id;type:bigint unsigned" json:"forest_file_id"`
-	RawContent   string          `gorm:"column:raw_content;type:longtext" json:"raw_content"`
+	ForestFileID *uint           `gorm:"column:forest_file_id;type:bigint" json:"forest_file_id"`
+	RawContent   string          `gorm:"column:raw_content;type:text" json:"raw_content"`
 }
 
 func (KeWebResource) TableName() string { return TableNameKeWebResource }

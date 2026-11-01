@@ -20,7 +20,7 @@ type User struct {
 	Phone    *string `gorm:"column:phone;type:varchar(16);comment:客户手机"`
 	Password *string `gorm:"column:password;type:varchar(128)" json:"password"`
 	//是否修改过密码(1:是,-1:否)
-	PasswordChanged types.Bool `gorm:"column:password_changed;type:tinyint(1);comment:是否修改过密码(1:是,-1:否)" json:"password_changed"`
+	PasswordChanged types.Bool `gorm:"column:password_changed;type:smallint;comment:是否修改过密码(1:是,-1:否)" json:"password_changed"`
 
 	// ThirdParty
 	GithubID         *uint   `gorm:"column:github_id;type:bigint;uniqueIndex;comment:Github ID"`

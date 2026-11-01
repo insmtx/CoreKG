@@ -9,8 +9,8 @@ import (
 )
 
 type KeWebCrawlRule struct {
-	ID       uint          `gorm:"column:id;type:bigint unsigned;primaryKey;autoIncrement" json:"id"`
-	AppID    uint          `gorm:"column:app_id;type:bigint unsigned;not null;default:0;index:idx_crawl_rule_app" json:"app_id"`
+	ID       uint          `gorm:"column:id;type:bigint;primaryKey;autoIncrement" json:"id"`
+	AppID    uint          `gorm:"column:app_id;type:bigint;not null;default:0;index:idx_crawl_rule_app" json:"app_id"`
 	RuleType CrawlRuleType `gorm:"column:rule_type;type:varchar(32);not null;default:'include'" json:"rule_type"`
 	Pattern  string        `gorm:"column:pattern;type:varchar(512);not null;default:''" json:"pattern"`
 	Priority int           `gorm:"column:priority;type:int;not null;default:0" json:"priority"`

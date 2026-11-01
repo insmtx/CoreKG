@@ -15,7 +15,7 @@ import (
 const (
 	baselineFindInSet   = 0
 	baselineRegexp      = 0
-	baselineMySQLTypTag = 218
+	baselineMySQLTypTag = 0
 )
 
 var typeTagSkipDirs = []string{"workflow", "testdata", "docs", "mysqlplugin", "svcexcelforest", "excelparser"}

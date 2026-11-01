@@ -76,8 +76,8 @@ type KnownowForestQA struct {
 	// Status 状态
 	Status QAStatus `gorm:"column:status;type:varchar(8);not null;default:'pending';comment:'状态'" json:"status"`
 
-	QueryReferenceList ChatReferenceList `gorm:"column:query_reference_list;type:mediumtext;comment:'引用内容列表';serializer:json" json:"query_reference_list"`
-	ChatReferenceList  ChatReferenceList `gorm:"column:chat_reference_list;type:mediumtext;comment:'引用内容列表';serializer:json" json:"chat_reference_list"`
+	QueryReferenceList ChatReferenceList `gorm:"column:query_reference_list;type:text;comment:'引用内容列表';serializer:json" json:"query_reference_list"`
+	ChatReferenceList  ChatReferenceList `gorm:"column:chat_reference_list;type:text;comment:'引用内容列表';serializer:json" json:"chat_reference_list"`
 }
 
 // TableName 表名

@@ -35,7 +35,7 @@ type GraphTagNode struct {
 	// NodeID           uint              `gorm:"column:node_id;type:bigint;not null;default:0;comment:'节点ID';uniqueIndex:idx_tag_node,priority:2" json:"node_id"`
 	FileIDList       types.UintArray   `gorm:"column:file_id_list;type:text;comment:'文件ID列表'" json:"file_id_list"`
 	ChunkIDList      types.StringArray `gorm:"column:chunk_id_list;type:text;comment:'分块ID列表'" json:"chunk_id_list"`
-	PropertiesValues PropertiesValues  `gorm:"column:properties_values;type:mediumtext;comment:'标签属性'" json:"properties_values"`
+	PropertiesValues PropertiesValues  `gorm:"column:properties_values;type:text;comment:'标签属性'" json:"properties_values"`
 
 	Uin         uint        `gorm:"column:uin;type:bigint;not null;default:0;comment:'用户ID';index" json:"uin"`
 	CompanyID   uint        `gorm:"column:company_id;type:bigint;not null;default:0;comment:'公司ID';index" json:"company_id"`

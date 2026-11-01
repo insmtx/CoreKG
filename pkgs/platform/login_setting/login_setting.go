@@ -36,11 +36,11 @@ type LoginSetting struct {
 	Env EnvType `gorm:"type:varchar(128);" json:"env"`
 	// // Methods 登录方式
 	// Methods []Method `gorm:"type:text;not null;serializer:json" json:"methods"`
-	IsEnableWeChat    bool `gorm:"type:tinyint;not null" json:"is_enable_wechat"`
-	IsEnableWeChatCom bool `gorm:"type:tinyint;not null" json:"is_enable_wechatcom"`
-	IsEnablePhone     bool `gorm:"type:tinyint;not null" json:"is_enable_phone"`
-	IsEnableEmail     bool `gorm:"type:tinyint;not null" json:"is_enable_email"`
-	IsEnablePassword  bool `gorm:"type:tinyint;not null;default:0" json:"is_enable_password"`
+	IsEnableWeChat    bool `gorm:"type:smallint;not null" json:"is_enable_wechat"`
+	IsEnableWeChatCom bool `gorm:"type:smallint;not null" json:"is_enable_wechatcom"`
+	IsEnablePhone     bool `gorm:"type:smallint;not null" json:"is_enable_phone"`
+	IsEnableEmail     bool `gorm:"type:smallint;not null" json:"is_enable_email"`
+	IsEnablePassword  bool `gorm:"type:smallint;not null;default:0" json:"is_enable_password"`
 	// Title 标题
 	Title string `gorm:"type:varchar(255);not null" json:"title"`
 	// ImageUrl 图片链接
@@ -53,7 +53,7 @@ type LoginSetting struct {
 	// 企微agentid，自建项目使用
 	AgentID string `gorm:"type:varchar(255);not null" json:"agentid"`
 	// 运行注册
-	AllowRegister bool `gorm:"type:tinyint;not null" json:"allow_register"`
+	AllowRegister bool `gorm:"type:smallint;not null" json:"allow_register"`
 
 	// 签发人信息
 	Issuer string `gorm:"type:varchar(128);not null" json:"issuer"`
