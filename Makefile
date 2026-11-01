@@ -73,6 +73,12 @@ run: check-app local
 local: check-app
 	$(GO) build -ldflags="$(LD_FLAGS)" -v -o bundles/$(APP) ./apps/${APP}/cmd/
 
+corekg:
+	mkdir -p bundles
+	$(GO) build -ldflags="$(LD_FLAGS)" -v -o bundles/corekg ./cmd/corekg
+
+.PHONY: corekg
+
 linux: check-app
 	GOOS=linux GOARCH=$(GOARCH) $(GO) build -ldflags="$(LD_FLAGS)" -v -o bundles/$(APP)-linux ./apps/${APP}/cmd/
 
