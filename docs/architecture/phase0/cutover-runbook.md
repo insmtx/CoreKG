@@ -249,7 +249,7 @@ PGPASSWORD="$PG_PASSWORD" pg_restore \
 | # | 步骤 | 内容 | 通过条件 | 失败处置（abort） |
 |---|---|---|---|---|
 | 1 | 冻结与通知 | 维护公告生效、网关维护页开、`main` 冻结确认（T-1 已做） | 公告可见、维护页生效 | — |
-| 2 | 停写（顺序不可换） | a. 网关维护/只读；b. **NATS 排空（worker 保持运行，`NumPending`→0）**；c. 停 worker（`keworker`/`keparser` 等）；d. **停全部旧 HTTP 服务（kecore/kechat/keapi/keparser/kesearch/account）**；e. MySQL `super_read_only = ON`；f. processlist 无业务连接残留 | 每步断言通过（§4.2） | 排空超时 `<DRAIN_TIMEOUT_MIN>` → 解除冻结、重启所停服务，中止切换（**零数据丢失**） |
+| 2 | 停写（顺序不可换） | a. 网关维护/只读；b. **NATS 排空（worker 保持运行，`NumPending`→0）**；c. 停 worker（`keworker`/`keparser` 等）；d. **停全部旧 HTTP 服务（kecore/kechat/keapi/keparser/kesearch/account）**；e. MySQL `super_read_only = ON`；f. processlist 无业务连接残留 | 每步断言通过（§4.2） | 排空超时 `<DRAIN_TIMEOUT_MIN>` → 中止切换（**零数据丢失**）：失败发生在冻结（e 小步）之前 → 解除网关维护、**仅重启已停的 worker/旧 HTTP 服务**；MySQL 已 `super_read_only=ON` → 解除只读必须走 §6.3 步骤 3 的**双开关程序**（`super_read_only` + `read_only` + 写探针），不得只执行 `SET GLOBAL super_read_only = OFF` |
 | 3 | 最终备份 | §3 全套（final dump + binlog 位点 + S3 清单 + ES 快照）+ `Dump completed`/位点断言 | SHA256 归档核验一致 | 中止切换（同上，无损） |
 | 4 | 最终增量 ETL | `corekg migrate from-mysql --apply`（Phase 4 交付）+ sequence 重置 | 工具退出码 0 | 按评估文档 §11.3 定位；超过 `<MAX_WINDOW_HOURS>` → 回滚（无损，PG 未接流量） |
 | 5 | 数据校验 | §5 G2–G4 | 全绿 | 修复后**重跑全套**；超时 → 回滚（无损） |
@@ -420,11 +420,13 @@ while IFS= read -r q; do
     -H 'Content-Type: application/json' -H "Authorization: Bearer $JWT" \
     -d "$(jq -n --argjson forest_id <RECALL_FOREST_ID> --arg text "$q" \
       '{cmd:"kesearch.ForestSearch", request:{forest_id:$forest_id, text:$text, is_semantics:false}}')" \
-    | jq '(.Response // .response).doc_search_result | map(.file_id) | .[0:10]'
+    | jq '(.Response // .response).doc_search_result | map(.id) | map(select(. != null)) | .[0:10]'
 done < <ARTIFACT_DIR>/recall-queries-<DATE>.txt > <ARTIFACT_DIR>/recall-<SIDE>-<DATE>.jsonl
 # <SIDE> = old（迁移前，BASE_URL=<OLD_BASE_URL>）/ new（重建后，BASE_URL=<COREKG_BASE_URL>）；
-# Top-10 的 id 字段以 ForestSearch 实际响应为准（golden-path stage 8 只断言结果非空），
-# 两侧必须用同一字段。两侧 jsonl 逐行做交集统计，按上述口径算平均重叠率。
+# id 字段 = ForestSearch DTO 的 json:"id"（apps/kesearch/models/globalsearch/file.go，注意不是 file_id），两侧同款命令。
+# 守卫（必须执行）：任一侧任一 query 的非空 id 少于 10 个或列表为空 → G5 直接判失败（fail），
+# 不得剔除该条继续算重叠率——空列表对空列表会算出 100% 重叠的假阳性。守卫通过后，
+# 两侧 jsonl 逐行做交集统计，按上述口径算平均重叠率。
 ```
 
 ### 5.3 chat P95 口径（G6）
@@ -473,7 +475,7 @@ curl -sS <COREKG_BASE_URL>/v3/keapi.Search \
   2. Phase 4 演练记录：G1–G5 在演练环境全绿（含 `<ES_REBUILD_CMD>` 已按 §4.3 规格交付并在演练环境跑通）且记录在 `<ARTIFACT_DIR>`；
   3. 回滚演练完成（§2 第 9 项，评估文档 §12.4 要求）；
   4. 业务确认维护窗口已公告、数据丢失边界（§7）已说明。
-- **NO-GO 处置**：窗口顺延 `<NEXT_WINDOW_DATE>`；若 `main` 已冻结且未开始停写，立即解冻；若已停写则按 §4.1 步骤 2 的 abort 无损恢复。
+- **NO-GO 处置**：窗口顺延 `<NEXT_WINDOW_DATE>`；若 `main` 已冻结且未开始停写，立即解冻；若已停写则按 §4.1 步骤 2 的 abort 无损恢复——未冻结（e 小步之前）仅解除网关维护并重启已停服务；MySQL 已 `super_read_only=ON` 时，解除只读必须走 §6.3 步骤 3 的**双开关程序**（`super_read_only` + `read_only` + 写探针）。
 - **灰度升档 mini Go/No-Go**：每档观察期末，SRE owner（应用 owner 备份）依据 G6–G9 决定"升档 / 保持观察 / 回滚"；判断与依据记入 status 记录。
 
 ## 6. 回滚步骤
@@ -551,9 +553,14 @@ curl -sS -X PUT "<GATEWAY_ADMIN_URL>/routes/corekg/upstream" \
 # DNS：对外域名 A 记录指回 <OLD_LB_IP>（TTL 已降，生效 ≤ 5 分钟；以 <DNS_PROVIDER> 实际为准）
 # 解除维护页后，golden-path 对旧栈复跑确认恢复（<OLD_BASE_URL>）。
 
-# 6) ES 快照恢复（仅当旧索引被覆盖/删除时；否则仅切回别名）：
-#    先关闭/删除目标 ke_*（系统索引不动——restore 用 indices 过滤），再后台恢复 + 轮询 + _count 断言
-curl -sS -X POST "<ES_ENDPOINT>/ke_*/_close" -u "<ES_USER>:$ES_PASSWORD"   # 或 DELETE（快照在手可重复恢复）
+# 6) ES 快照恢复（仅当旧索引被覆盖/删除时；安全分支：旧索引原地保留且完好 → 不 restore，
+#    仅把别名切回旧索引，见步骤 6）：
+#    处置目标索引首选 DELETE 而非仅 _close——别名会存留在已关闭（closed）的索引上，
+#    与快照恢复回来的同名别名冲突（restore 失败或别名指向错误）。删除对象含重建产生的
+#    -v<N> 目标索引（当前持别名；ke_* 通配符同时匹配 ke_<company> 与 ke_<company>-v<N>）；
+#    快照在手可重复恢复，删除可重放。若确需保守动作（网关尚未完全摘流量等），_close 为次选，
+#    但 restore 报别名冲突时回退 DELETE 重试。
+curl -sS -X DELETE "<ES_ENDPOINT>/ke_*" -u "<ES_USER>:$ES_PASSWORD"
 curl -sS -X POST "<ES_ENDPOINT>/_snapshot/<SNAPSHOT_REPO>/pre-cutover-<DATE>/_restore?wait_for_completion=false" \
   -u "<ES_USER>:$ES_PASSWORD" -H 'Content-Type: application/json' \
   -d '{"indices":"ke_*","include_global_state":false}'
@@ -668,7 +675,7 @@ on-call 值班 → 角色 owner（15 分钟未响应即升级）→ 部门负责
 
 | 时间 | 事项 | owner | 产出物 | 决策点 |
 |---|---|---|---|---|
-| T-7 | 备份恢复演练（§3.6，含 MySQL 写探针表预建与探针演练）；ES snapshot repo 注册 + 快照验证；golden-path 基线复核（**必须已 11/11 绿**）；召回 query 集冻结（§5.2）；角色 owner 指定（§8.1）；`<MAX_WINDOW_HOURS>` 回填；**镜像 registry/repo 约定确认**：记录 legacy 管线约定（Makefile `IMAGE_NAME = docker.io/corekg/<APP>-api`）并**显式决定**新单体镜像名 `<NEW_IMAGE_NAME>`（registry 可达、登录凭据通道可用），同时记录 `<OLD_IMAGE_TAG>` 与 `<NEW_IMAGE_TAG>` 的 digest | DBA/SRE/全部 | 演练报告、`recall-queries-<DATE>.txt`、owner 表、镜像约定与 digest 记录 | 演练失败 / 镜像约定未决 → 窗口顺延 |
+| T-7 | 备份恢复演练（§3.6，含 MySQL 写探针表预建与探针演练）；ES snapshot repo 注册 + 快照验证；golden-path 基线复核（**必须已 11/11 绿**）；召回 query 集冻结（§5.2）；**旧栈侧召回基线执行**：query 集冻结后立即按 §5.2 以 `<SIDE>=old`、`BASE_URL=<OLD_BASE_URL>` 跑完并留存产物（趁旧栈仍在线——T0 停写后旧 HTTP 服务已停，届时无法再取基线）；角色 owner 指定（§8.1）；`<MAX_WINDOW_HOURS>` 回填；**镜像 registry/repo 约定确认**：记录 legacy 管线约定（Makefile `IMAGE_NAME = docker.io/corekg/<APP>-api`）并**显式决定**新单体镜像名 `<NEW_IMAGE_NAME>`（registry 可达、登录凭据通道可用），同时记录 `<OLD_IMAGE_TAG>` 与 `<NEW_IMAGE_TAG>` 的 digest | DBA/SRE/全部 | 演练报告、`recall-queries-<DATE>.txt`、`recall-old-<DATE>.jsonl`、owner 表、镜像约定与 digest 记录 | 演练失败 / 镜像约定未决 → 窗口顺延 |
 | T-1 | `main` 冻结；DNS TTL 降至 ≤ 60s；§2 清单终检；Go/No-Go 会议（§5.5）；维护公告发布；`<ENV_FILE>`/`<MYSQL_DEFAULTS_FILE>` 通道验证 | SRE/全部 | 冻结记录、会议纪要、公告链接 | **GO / NO-GO** |
 | T0 | §4 全步骤：停写（含停旧 HTTP 服务）→ 最终备份 → ETL → 校验 → ES 重建 → PG 快照 → 新栈 → 灰度 1%/10%/100%（其余流量维护页）→ 观察 | 全部 | 门禁产物、每 30 分钟 status 记录 | 每步 abort（§4.1）；触发回滚（§6.2） |
 | T0+1h | 初步稳定性判定 | SRE | 观测报告 | 保持 / 回滚 |
