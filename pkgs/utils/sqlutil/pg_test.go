@@ -10,3 +10,8 @@ func TestContainsCSV(t *testing.T) {
 	require.Equal(t, "?::text = ANY(string_to_array(f.manager_ids, ','))", ContainsCSV("f.manager_ids"))
 	require.Equal(t, "?::text = ANY(string_to_array(forest.manager_ids, ','))", ContainsCSV("forest.manager_ids"))
 }
+
+func TestRegexpInsensitive(t *testing.T) {
+	require.Equal(t, "forest.name ~* ?", RegexpInsensitive("forest.name"))
+	require.Equal(t, "a.show_name ~* ?", RegexpInsensitive("a.show_name"))
+}

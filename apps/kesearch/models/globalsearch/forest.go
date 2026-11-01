@@ -75,7 +75,7 @@ func (wrapper GlobalSearchWrapper) FindForestWithKeywords() ([]*SearchForestType
 			"forest.data_source_subtype, "+
 			"forest.avatar_url AS image_url ").
 		Where("forest.deleted_at IS NULL").
-		Where("forest.name REGEXP ? or forest.description REGEXP ?", token_str, token_str)
+		Where(sqlutil.RegexpInsensitive("forest.name")+" OR "+sqlutil.RegexpInsensitive("forest.description"), token_str, token_str)
 	// Where("f.is_dir = ?", -1).
 	// Where("f.deleted_at IS NULL")
 

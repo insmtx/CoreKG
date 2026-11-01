@@ -12,6 +12,7 @@ import (
 	"github.com/insmtx/corekg/apps/kecore/models/foresttype"
 	"github.com/insmtx/corekg/apps/kesearch/models/essearch"
 	"github.com/insmtx/corekg/pkgs/utils/dbutil"
+	"github.com/insmtx/corekg/pkgs/utils/sqlutil"
 	"github.com/ygpkg/yg-go/logs"
 	"github.com/ygpkg/yg-go/settings"
 )
@@ -116,7 +117,7 @@ func (wrapper GlobalSearchWrapper) FindAgentsWithKeywords() ([]*SearchAgentType,
 			"v.agent_type").
 		Joins("LEFT JOIN chat_agent_version v ON a.version = v.id").
 		Where("a.deleted_at IS NULL").
-		Where("a.show_name REGEXP ? or v.description REGEXP ?", token_str, token_str)
+		Where(sqlutil.RegexpInsensitive("a.show_name")+" OR "+sqlutil.RegexpInsensitive("v.description"), token_str, token_str)
 
 	// ======== 核心权限控制逻辑 ========
 	// 构建有权限查看的 agent_id 子查询

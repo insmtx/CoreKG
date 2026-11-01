@@ -6,3 +6,8 @@ import "fmt"
 func ContainsCSV(column string) string {
 	return fmt.Sprintf("?::text = ANY(string_to_array(%s, ','))", column)
 }
+
+// RegexpInsensitive returns a PostgreSQL case-insensitive regex predicate.
+func RegexpInsensitive(column string) string {
+	return fmt.Sprintf("%s ~* ?", column)
+}
