@@ -14,6 +14,7 @@ func main() {
 		SilenceErrors: false,
 	}
 	rootCmd.AddCommand(newServerCmd())
+	rootCmd.AddCommand(newMigrateCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
